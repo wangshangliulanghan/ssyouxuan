@@ -20,7 +20,7 @@ let customECHDomain = 'cloudflare-ech.com';
 const directDomains = [];
 
 // ⭐️ 终极优化：替换为每小时测速更新、专门筛选低延迟的高质量精简 IP 库
-const defaultIPURL = 'https://raw.githubusercontent.com/ymyuuu/IPDB/main/bestcf.txt';
+const defaultIPURL = 'https://raw.githubusercontent.com/cmliu/WorkerVless2sub/main/addressesapi.txt';
 
 // UUID验证
 function isValidUUID(str) {
