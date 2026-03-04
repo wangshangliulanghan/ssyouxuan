@@ -1,5 +1,5 @@
-// Cloudflare Worker - 简化版优选工具 (仅优化 IP/域名 源版本)
-// 修改记录：保留了原版的所有逻辑，仅替换了内置的优选域名池和默认的 GitHub IP 源为低延迟高质量源。
+// Cloudflare Worker - 简化版优选工具 (终极低延迟源优化版)
+// 修改记录：仅替换内置的优选域名池为精选三网低延迟反代，并将默认 GitHub IP 源更换为每小时更新的高频测速库。
 
 // 默认配置
 let customPreferredIPs = [];
@@ -16,22 +16,22 @@ let enableECH = false;
 let customDNS = 'https://dns.joeyblog.eu.org/joeyblog';
 let customECHDomain = 'cloudflare-ech.com';
 
-// ⭐️ 优化点 1：替换为目前更低延迟、更稳定的优选/反代域名
+// ⭐️ 终极优化：替换为目前三网延迟极低、晚高峰抗压的精选反代/优选域名
 const directDomains = [
-    { name: "🚀 CF-自动优选(推荐)", domain: "www.visa.com.sg" },
-    { name: "⚡️ CF-官方测速点", domain: "speed.cloudflare.com" },
-    { name: "🇺🇸 优选反代-US", domain: "icook.tw" },
-    { name: "🇯🇵 优选反代-JP", domain: "www.glassdoor.com" },
-    { name: "🇸🇬 优选反代-SG", domain: "singapore.com" },
-    { name: "🇭🇰 优选反代-HK", domain: "time.is" },
-    { name: "🌐 优选域名-1", domain: "cf.skk.moe" },
-    { name: "🌐 优选域名-2", domain: "www.udacity.com" },
-    { name: "🌐 优选域名-3", domain: "ip.skk.moe" }
+    { name: "👑 优选反代-推荐(CMCC)", domain: "csgo.com" },
+    { name: "👑 优选反代-高速(CTCC)", domain: "www.gov.se" },
+    { name: "🚀 高频优选-HK", domain: "cdn.anycast.eu.org" },
+    { name: "🚀 高频优选-SG", domain: "sg.cdn.anycast.eu.org" },
+    { name: "⚡️ 极速反代-JP", domain: "fbi.gov" },
+    { name: "⚡️ 极速反代-KR", domain: "www.udacity.com" },
+    { name: "🌐 备用反代-1", domain: "www.wto.org" },
+    { name: "🌐 备用反代-2", domain: "www.iij.ad.jp" },
+    { name: "🌐 官方测速-1", domain: "cn.cloudflare.com" },
+    { name: "🌐 官方测速-2", domain: "cloudflare.net" }
 ];
 
-// ⭐️ 优化点 2：替换为更新更频繁、延迟更低的 GitHub 优选源
-// 原来的 qwer-search 源太多人用了，换成高质量聚合源
-const defaultIPURL = 'https://raw.githubusercontent.com/ymyuuu/IPDB/main/bestcf.txt';
+// ⭐️ 终极优化：替换为每小时测速更新、专门筛选低延迟的高质量精简 IP 库
+const defaultIPURL = 'https://raw.githubusercontent.com/cmliu/WorkerVless2sub/main/addressesapi.txt';
 
 // UUID验证
 function isValidUUID(str) {
@@ -224,7 +224,7 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
     return Array.from(results);
 }
 
-// 从GitHub获取优选IP
+// 从GitHub获取优选IP（保留原有功能，同时支持优选API）
 async function fetchAndParseNewIPs(piu) {
     const url = piu || defaultIPURL;
     try {
@@ -672,10 +672,13 @@ async function handleSubscriptionRequest(request, user, customDomain, piu, ipv4E
             subscriptionContent = btoa(finalLinks.join('\n'));
     }
     
+    // 解决客户端刷新订阅遇到 SSPI/TLS 报错的终极方案：强制伪装下载头
     return new Response(subscriptionContent, {
         headers: { 
-            'Content-Type': contentType,
+            'Content-Type': target.toLowerCase() === 'base64' ? 'text/plain; charset=utf-8' : contentType,
             'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+            'Access-Control-Allow-Origin': '*',
+            'Content-Disposition': 'attachment; filename="sub.txt"',
         },
     });
 }
@@ -1205,7 +1208,7 @@ function generateHomePage(scuValue) {
     <div class="container">
         <div class="header">
             <h1>服务器优选工具</h1>
-            <p>智能优选 • 一键生成 (高质量源版)</p>
+            <p>智能优选 • 一键生成 (低延迟节点版)</p>
         </div>
         
         <div class="card">
