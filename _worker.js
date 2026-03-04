@@ -17,18 +17,7 @@ let customDNS = 'https://dns.joeyblog.eu.org/joeyblog';
 let customECHDomain = 'cloudflare-ech.com';
 
 // ⭐️ 终极优化：替换为目前三网延迟极低、晚高峰抗压的精选反代/优选域名
-const directDomains = [
-    { name: "👑 优选反代-推荐(CMCC)", domain: "csgo.com" },
-    { name: "👑 优选反代-高速(CTCC)", domain: "www.gov.se" },
-    { name: "🚀 高频优选-HK", domain: "cdn.anycast.eu.org" },
-    { name: "🚀 高频优选-SG", domain: "sg.cdn.anycast.eu.org" },
-    { name: "⚡️ 极速反代-JP", domain: "fbi.gov" },
-    { name: "⚡️ 极速反代-KR", domain: "www.udacity.com" },
-    { name: "🌐 备用反代-1", domain: "www.wto.org" },
-    { name: "🌐 备用反代-2", domain: "www.iij.ad.jp" },
-    { name: "🌐 官方测速-1", domain: "cn.cloudflare.com" },
-    { name: "🌐 官方测速-2", domain: "cloudflare.net" }
-];
+const directDomains = [];
 
 // ⭐️ 终极优化：替换为每小时测速更新、专门筛选低延迟的高质量精简 IP 库
 const defaultIPURL = 'https://raw.githubusercontent.com/cmliu/WorkerVless2sub/main/addressesapi.txt';
