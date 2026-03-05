@@ -1,11 +1,11 @@
-// Cloudflare Worker - 简化版优选工具 (纯净私库定制版)
-// 修复记录：重写 IPv6 正则表达式修复无法读取 V6 的 Bug；默认关闭冗余抓取，确保 100% 纯净。
+// Cloudflare Worker - 简化版优选工具 (纯净私库极简命名版)
+// 修复记录：重写 IPv6 解析、关闭默认杂质源、彻底精简生成节点名称后缀。
 
 // ================= 全局默认配置 (常量) =================
 const DEFAULT_CONFIG = {
-    epd: false,  // ❌ 关闭默认域名优选
-    epi: false,  // ❌ 关闭默认Wetest动态IP抓取 (彻底解决"移动-HKG"等杂质)
-    egi: true,   // ✅ 开启GitHub优选(只读你的专属Gist)
+    epd: false,  // 关闭默认域名优选
+    epi: false,  // 关闭默认Wetest动态IP抓取 (彻底防污染)
+    egi: true,   // 开启GitHub优选(只读你的专属Gist)
     ev: true,   
     et: false,  
     vm: false,  
@@ -143,7 +143,7 @@ async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
     return Array.from(results);
 }
 
-// 🐛 重点修复区：完美支持 IPv4 和带中括号的 IPv6 解析
+// 完美支持 IPv4 和带中括号的 IPv6 解析
 async function fetchGitHubIPs(piu) {
     const url = piu || DEFAULT_CONFIG.defaultIPURL;
     try {
@@ -153,14 +153,13 @@ async function fetchGitHubIPs(piu) {
         const results = [];
         const lines = text.trim().replace(/\r/g, "").split('\n');
         
-        // 修复后的正则：兼容 1.1.1.1:443 和 [2606::1]:80 两种格式
         const regex = /^(\[[a-fA-F0-9:]+\]|[\d\.]+):(\d+)(?:#(.*))?$/;
 
         for (const line of lines) {
             const match = line.trim().match(regex);
             if (match) {
                 results.push({ 
-                    ip: match[1].replace(/[\[\]]/g, ''), // 剥离中括号，核心函数会自动处理
+                    ip: match[1].replace(/[\[\]]/g, ''), 
                     port: parseInt(match[2], 10), 
                     name: match[3] ? match[3].trim() : match[1].replace(/[\[\]]/g, '') 
                 });
@@ -172,7 +171,7 @@ async function fetchGitHubIPs(piu) {
     }
 }
 
-// ================= 核心节点生成 (DRY 提炼合并版) =================
+// ================= 核心节点生成 (极简命名版) =================
 function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echConfig, protocols) {
     const CF_HTTP_PORTS = [80, 8080, 8880, 2052, 2082, 2086, 2095];
     const CF_HTTPS_PORTS = [443, 2053, 2083, 2087, 2096, 8443];
@@ -212,20 +211,19 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
                 wsParams.set('security', 'none');
             }
 
+            // 🚀 手术核心：完全砍掉花里胡哨的后缀，只用 nodeNameBase (例如：移动-HKG)
             if (protocols.evEnabled) {
                 const vlessParams = new URLSearchParams(wsParams);
                 vlessParams.set('encryption', 'none');
-                const wsNodeName = `${nodeNameBase}-${port}-VLESS-WS${tls ? '-TLS' : ''}`;
-                links.push(`vless://${user}@${safeIP}:${port}?${vlessParams.toString()}#${encodeURIComponent(wsNodeName)}`);
+                links.push(`vless://${user}@${safeIP}:${port}?${vlessParams.toString()}#${encodeURIComponent(nodeNameBase)}`);
             }
             if (protocols.etEnabled) {
-                const wsNodeName = `${nodeNameBase}-${port}-Trojan-WS${tls ? '-TLS' : ''}`;
-                links.push(`trojan://${user}@${safeIP}:${port}?${wsParams.toString()}#${encodeURIComponent(wsNodeName)}`);
+                links.push(`trojan://${user}@${safeIP}:${port}?${wsParams.toString()}#${encodeURIComponent(nodeNameBase)}`);
             }
             if (protocols.vmEnabled) {
                 const vmessConfig = {
                     v: "2",
-                    ps: `${nodeNameBase}-${port}-VMess-WS${tls ? '-TLS' : ''}`,
+                    ps: nodeNameBase,
                     add: safeIP, port: port.toString(), id: user, aid: "0", scy: "auto",
                     net: "ws", type: "none", host: workerDomain, path: wsPath,
                     tls: tls ? "tls" : "none"
@@ -254,9 +252,6 @@ async function handleSubscriptionRequest(request, config) {
     const addNodesFromList = async (list) => {
         finalLinks.push(...generateNodesFromList(list, config.user, config.nodeDomain, config.disableNonTLS, config.customPath, config.echConfig, protocols));
     };
-
-    // 禁用自带的原生节点，确保订阅列表100%来自你的Gist
-    // await addNodesFromList([{ ip: config.workerDomain, isp: '原生地址' }]);
 
     if (config.epdEnabled) {
         const domainList = directDomains.map(d => ({ ip: d.domain, isp: d.name || d.domain }));
@@ -834,7 +829,7 @@ function generateHomePage(scuValue) {
     <div class="container">
         <div class="header">
             <h1>服务器优选工具</h1>
-            <p>智能优选 • 纯净私库定制版</p>
+            <p>智能优选 • 极简命名终极版</p>
         </div>
         
         <div class="card">
@@ -978,15 +973,15 @@ function generateHomePage(scuValue) {
         </div>
         
         <div class="footer">
-            <p>简化版优选工具 • 纯净私有定制版</p>
+            <p>极简命名版工具 • 纯净私有定制</p>
         </div>
     </div>
     
     <script>
         let switches = {
-            switchDomain: false, // UI默认关闭，保持纯净
-            switchIP: false,     // UI默认关闭，屏蔽Wetest
-            switchGitHub: true,  // UI默认开启私库
+            switchDomain: false, 
+            switchIP: false,     
+            switchGitHub: true,  
             switchVL: true,
             switchTJ: false,
             switchVM: false,
@@ -1230,8 +1225,8 @@ export default {
                 customPath: url.searchParams.get('path') || '/',
                 piu: url.searchParams.get('piu') || DEFAULT_CONFIG.defaultIPURL,
                 
-                epdEnabled: url.searchParams.get('epd') === 'yes', // 改为严格判定，防止污染
-                epiEnabled: url.searchParams.get('epi') === 'yes', // 改为严格判定，防止污染
+                epdEnabled: url.searchParams.get('epd') === 'yes', 
+                epiEnabled: url.searchParams.get('epi') === 'yes', 
                 egiEnabled: url.searchParams.get('egi') !== 'no',
                 
                 evEnabled: url.searchParams.get('ev') === 'yes' || (url.searchParams.get('ev') === null && DEFAULT_CONFIG.ev),
