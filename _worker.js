@@ -1,11 +1,11 @@
-// Cloudflare Worker - 简化版优选工具 (终极低延迟源优化版) - 重构优化版
-// 修复记录：解决多用户并发请求导致全局变量污染(串号)的致命Bug；合并重复逻辑提升性能。
+// Cloudflare Worker - 简化版优选工具 (纯净私库定制版)
+// 修复记录：重写 IPv6 正则表达式修复无法读取 V6 的 Bug；默认关闭冗余抓取，确保 100% 纯净。
 
 // ================= 全局默认配置 (常量) =================
 const DEFAULT_CONFIG = {
-    epd: true,  
-    epi: true,  
-    egi: true,  
+    epd: false,  // ❌ 关闭默认域名优选
+    epi: false,  // ❌ 关闭默认Wetest动态IP抓取 (彻底解决"移动-HKG"等杂质)
+    egi: true,   // ✅ 开启GitHub优选(只读你的专属Gist)
     ev: true,   
     et: false,  
     vm: false,  
@@ -13,6 +13,7 @@ const DEFAULT_CONFIG = {
     enableECH: false,
     customDNS: 'https://dns.joeyblog.eu.org/joeyblog',
     customECHDomain: 'cloudflare-ech.com',
+    // 指向你的永久 Gist Raw 链接
     defaultIPURL: 'https://gist.githubusercontent.com/shiyikeji/3aa87176e89a34e48f72487fbbada9d2/raw/my_best_ips.txt'
 };
 
@@ -142,6 +143,7 @@ async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
     return Array.from(results);
 }
 
+// 🐛 重点修复区：完美支持 IPv4 和带中括号的 IPv6 解析
 async function fetchGitHubIPs(piu) {
     const url = piu || DEFAULT_CONFIG.defaultIPURL;
     try {
@@ -150,12 +152,18 @@ async function fetchGitHubIPs(piu) {
         const text = await response.text();
         const results = [];
         const lines = text.trim().replace(/\r/g, "").split('\n');
-        const regex = /^([^:]+):(\d+)#(.*)$/;
+        
+        // 修复后的正则：兼容 1.1.1.1:443 和 [2606::1]:80 两种格式
+        const regex = /^(\[[a-fA-F0-9:]+\]|[\d\.]+):(\d+)(?:#(.*))?$/;
 
         for (const line of lines) {
             const match = line.trim().match(regex);
             if (match) {
-                results.push({ ip: match[1], port: parseInt(match[2], 10), name: match[3].trim() || match[1] });
+                results.push({ 
+                    ip: match[1].replace(/[\[\]]/g, ''), // 剥离中括号，核心函数会自动处理
+                    port: parseInt(match[2], 10), 
+                    name: match[3] ? match[3].trim() : match[1].replace(/[\[\]]/g, '') 
+                });
             }
         }
         return results;
@@ -247,7 +255,8 @@ async function handleSubscriptionRequest(request, config) {
         finalLinks.push(...generateNodesFromList(list, config.user, config.nodeDomain, config.disableNonTLS, config.customPath, config.echConfig, protocols));
     };
 
-    await addNodesFromList([{ ip: config.workerDomain, isp: '原生地址' }]);
+    // 禁用自带的原生节点，确保订阅列表100%来自你的Gist
+    // await addNodesFromList([{ ip: config.workerDomain, isp: '原生地址' }]);
 
     if (config.epdEnabled) {
         const domainList = directDomains.map(d => ({ ip: d.domain, isp: d.name || d.domain }));
@@ -825,7 +834,7 @@ function generateHomePage(scuValue) {
     <div class="container">
         <div class="header">
             <h1>服务器优选工具</h1>
-            <p>智能优选 • 一键生成 (低延迟节点版)</p>
+            <p>智能优选 • 纯净私库定制版</p>
         </div>
         
         <div class="card">
@@ -849,27 +858,26 @@ function generateHomePage(scuValue) {
                 <div>
                     <div class="list-item-label">启用优选域名</div>
                 </div>
-                <div class="switch active" id="switchDomain"></div>
+                <div class="switch" id="switchDomain"></div>
             </div>
             
             <div class="list-item" onclick="toggleSwitch('switchIP')">
                 <div>
-                    <div class="list-item-label">启用优选IP</div>
+                    <div class="list-item-label">启用内置优选IP(含杂质)</div>
                 </div>
-                <div class="switch active" id="switchIP"></div>
+                <div class="switch" id="switchIP"></div>
             </div>
             
             <div class="list-item" onclick="toggleSwitch('switchGitHub')">
                 <div>
-                    <div class="list-item-label">启用GitHub优选</div>
+                    <div class="list-item-label">启用私有纯净IP库(推荐)</div>
                 </div>
                 <div class="switch active" id="switchGitHub"></div>
             </div>
             
             <div class="form-group" id="githubUrlGroup" style="margin-top: 12px;">
                 <label>GitHub优选URL（可选）</label>
-                <input type="text" id="githubUrl" placeholder="留空则使用默认地址" style="font-size: 15px;">
-                <small style="display: block; margin-top: 6px; color: #86868b; font-size: 13px;">自定义优选IP列表来源URL，留空则使用默认地址</small>
+                <input type="text" id="githubUrl" placeholder="留空则使用内置的纯净链接" style="font-size: 15px;">
             </div>
             
             <div class="form-group" style="margin-top: 24px;">
@@ -970,19 +978,15 @@ function generateHomePage(scuValue) {
         </div>
         
         <div class="footer">
-            <p>简化版优选工具 • 仅用于节点生成</p>
-            <div style="margin-top: 20px; display: flex; justify-content: center; gap: 24px; flex-wrap: wrap;">
-                <a href="https://github.com/byJoey/yx-auto" target="_blank" style="color: #007aff; text-decoration: none; font-size: 15px; font-weight: 500;">GitHub 项目</a>
-                <a href="https://www.youtube.com/@joeyblog" target="_blank" style="color: #007aff; text-decoration: none; font-size: 15px; font-weight: 500;">YouTube @joeyblog</a>
-            </div>
+            <p>简化版优选工具 • 纯净私有定制版</p>
         </div>
     </div>
     
     <script>
         let switches = {
-            switchDomain: true,
-            switchIP: true,
-            switchGitHub: true,
+            switchDomain: false, // UI默认关闭，保持纯净
+            switchIP: false,     // UI默认关闭，屏蔽Wetest
+            switchGitHub: true,  // UI默认开启私库
             switchVL: true,
             switchTJ: false,
             switchVM: false,
@@ -1218,7 +1222,6 @@ export default {
         
         const pathMatch = path.match(/^\/([^\/]+)\/sub$/);
         if (pathMatch) {
-            // 安全配置注入点，防止变量被其他请求污染
             const reqConfig = {
                 user: pathMatch[1],
                 workerDomain: url.hostname,
@@ -1227,8 +1230,8 @@ export default {
                 customPath: url.searchParams.get('path') || '/',
                 piu: url.searchParams.get('piu') || DEFAULT_CONFIG.defaultIPURL,
                 
-                epdEnabled: url.searchParams.get('epd') !== 'no',
-                epiEnabled: url.searchParams.get('epi') !== 'no',
+                epdEnabled: url.searchParams.get('epd') === 'yes', // 改为严格判定，防止污染
+                epiEnabled: url.searchParams.get('epi') === 'yes', // 改为严格判定，防止污染
                 egiEnabled: url.searchParams.get('egi') !== 'no',
                 
                 evEnabled: url.searchParams.get('ev') === 'yes' || (url.searchParams.get('ev') === null && DEFAULT_CONFIG.ev),
