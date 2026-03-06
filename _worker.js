@@ -1,6 +1,5 @@
-// Cloudflare Worker - 简化版优选工具 (纯净私库极简命名版) + 极致网速优化版
-// 修复记录：重写 IPv6 解析、关闭默认杂质源、彻底精简生成节点名称后缀。
-// 提速补丁：注入 ed=2048 (0-RTT)、强制 alpn=h2,http/1.1 多路复用、fp=chrome 指纹伪装。
+// Cloudflare Worker - 简化版优选工具 (纯净私库极简命名版)
+// 修复记录：移除导致 WS 协议冲突的强制 h2 和 0-RTT 参数，恢复节点连通性，保留 fp=chrome 指纹伪装。
 
 // ================= 全局默认配置 (常量) =================
 const DEFAULT_CONFIG = {
@@ -172,7 +171,7 @@ async function fetchGitHubIPs(piu) {
     }
 }
 
-// ================= 核心节点生成 (极速网速优化版) =================
+// ================= 核心节点生成 (兼容回退版) =================
 function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echConfig, protocols) {
     const CF_HTTP_PORTS = [80, 8080, 8880, 2052, 2082, 2086, 2095];
     const CF_HTTPS_PORTS = [443, 2053, 2083, 2087, 2096, 8443];
@@ -203,22 +202,19 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
             if (tls) {
                 wsParams.set('security', 'tls');
                 wsParams.set('sni', workerDomain);
-                wsParams.set('fp', 'chrome'); // 伪装 Chrome 浏览器指纹防检测
+                wsParams.set('fp', 'chrome'); // 保留伪装指纹，这个是安全的且能防阻断
                 
-                // 🚀 核心网速提速注入：强制 ALPN 和 0-RTT
                 if (echConfig) {
                     wsParams.set('alpn', 'h3,h2,http/1.1');
                     wsParams.set('ech', echConfig);
-                } else {
-                    wsParams.set('alpn', 'h2,http/1.1'); // 开启 HTTP/2 多路复用，消除队头阻塞
-                }
-                wsParams.set('ed', '2048'); // 注入 Early Data，启用 TLS 1.3 0-RTT 秒开
+                } 
+                // 彻底删除了普通 TLS 下强制指定 alpn=h2 和 ed=2048 的逻辑
+                // 让 WebSocket 顺理成章地走它该走的 HTTP/1.1 握手
                 
             } else {
                 wsParams.set('security', 'none');
             }
 
-            // 完全砍掉花里胡哨的后缀，只用 nodeNameBase
             if (protocols.evEnabled) {
                 const vlessParams = new URLSearchParams(wsParams);
                 vlessParams.set('encryption', 'none');
@@ -238,7 +234,7 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
                 if (tls) {
                     vmessConfig.sni = workerDomain;
                     vmessConfig.fp = "chrome";
-                    vmessConfig.alpn = echConfig ? "h3,h2,http/1.1" : "h2,http/1.1";
+                    if (echConfig) vmessConfig.alpn = "h3,h2,http/1.1";
                 }
                 const vmessBase64 = safeBase64Encode(JSON.stringify(vmessConfig));
                 links.push(`vmess://${vmessBase64}`);
@@ -363,7 +359,7 @@ function generateClashConfig(links) {
         const path = link.match(/path=([^&#]+)/)?.[1] || '/';
         const host = link.match(/host=([^&#]+)/)?.[1] || '';
         const sni = link.match(/sni=([^&#]+)/)?.[1] || '';
-        const alpn = link.match(/[?&]alpn=([^&#]+)/)?.[1] || 'h2,http/1.1';
+        const alpn = link.match(/[?&]alpn=([^&#]+)/)?.[1];
         const echParam = link.match(/[?&]ech=([^&#]+)/)?.[1];
         
         if(isVless || isTrojan) {
@@ -470,7 +466,7 @@ function generateHomePage(scuValue) {
     <div class="container">
         <div class="header">
             <h1>服务器优选工具</h1>
-            <p>极速优化版 (0-RTT & 多路复用) ⚡</p>
+            <p>稳定兼容版 (恢复连通性) 🛡️</p>
         </div>
         
         <div class="card">
