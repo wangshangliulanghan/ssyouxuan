@@ -143,7 +143,7 @@ async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
     return Array.from(results);
 }
 
-//完美支持 IPv4 和带中括号的 IPv6 解析
+// 完美支持 IPv4 和带中括号的 IPv6 解析
 async function fetchGitHubIPs(piu) {
     const url = piu || DEFAULT_CONFIG.defaultIPURL;
     try {
@@ -171,7 +171,7 @@ async function fetchGitHubIPs(piu) {
     }
 }
 
-// ================= 核心节点生成 (兼容回退版) =================
+// ================= 核心节点生成 (极简命名版) =================
 function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echConfig, protocols) {
     const CF_HTTP_PORTS = [80, 8080, 8880, 2052, 2082, 2086, 2095];
     const CF_HTTPS_PORTS = [443, 2053, 2083, 2087, 2096, 8443];
@@ -202,19 +202,16 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
             if (tls) {
                 wsParams.set('security', 'tls');
                 wsParams.set('sni', workerDomain);
-                wsParams.set('fp', 'chrome'); // 保留伪装指纹，这个是安全的且能防阻断
-                
+                wsParams.set('fp', 'chrome');
                 if (echConfig) {
                     wsParams.set('alpn', 'h3,h2,http/1.1');
                     wsParams.set('ech', echConfig);
-                } 
-                // 彻底删除了普通 TLS 下强制指定 alpn=h2 和 ed=2048 的逻辑
-                // 让 WebSocket 顺理成章地走它该走的 HTTP/1.1 握手
-                
+                }
             } else {
                 wsParams.set('security', 'none');
             }
 
+            // 🚀 手术核心：完全砍掉花里胡哨的后缀，只用 nodeNameBase (例如：移动-HKG)
             if (protocols.evEnabled) {
                 const vlessParams = new URLSearchParams(wsParams);
                 vlessParams.set('encryption', 'none');
@@ -234,7 +231,6 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
                 if (tls) {
                     vmessConfig.sni = workerDomain;
                     vmessConfig.fp = "chrome";
-                    if (echConfig) vmessConfig.alpn = "h3,h2,http/1.1";
                 }
                 const vmessBase64 = safeBase64Encode(JSON.stringify(vmessConfig));
                 links.push(`vmess://${vmessBase64}`);
@@ -359,16 +355,11 @@ function generateClashConfig(links) {
         const path = link.match(/path=([^&#]+)/)?.[1] || '/';
         const host = link.match(/host=([^&#]+)/)?.[1] || '';
         const sni = link.match(/sni=([^&#]+)/)?.[1] || '';
-        const alpn = link.match(/[?&]alpn=([^&#]+)/)?.[1];
         const echParam = link.match(/[?&]ech=([^&#]+)/)?.[1];
         
         if(isVless || isTrojan) {
              yaml += `  - name: ${name}\n    type: ${isVless ? 'vless' : 'trojan'}\n    server: ${server}\n    port: ${port}\n    ${isVless ? 'uuid' : 'password'}: ${passOrUuid}\n    tls: ${tls}\n    network: ws\n    ws-opts:\n      path: ${path}\n      headers:\n        Host: ${host}\n`;
              if (sni) yaml += `    servername: ${sni}\n`;
-             if (alpn) {
-                 const alpnArray = decodeURIComponent(alpn).split(',');
-                 yaml += `    alpn:\n${alpnArray.map(a => `      - ${a}`).join('\n')}\n`;
-             }
              if (echParam) yaml += `    ech-opts:\n      enable: true\n      query-server-name: ${decodeURIComponent(echParam).split('+')[0]}\n`;
         }
     });
@@ -466,7 +457,7 @@ function generateHomePage(scuValue) {
     <div class="container">
         <div class="header">
             <h1>服务器优选工具</h1>
-            <p>稳定兼容版 (恢复连通性) 🛡️</p>
+            <p>智能优选 • 极简命名终极版</p>
         </div>
         
         <div class="card">
