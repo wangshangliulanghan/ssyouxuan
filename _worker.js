@@ -1,5 +1,5 @@
 // Cloudflare Worker - 简化版优选工具 (纯净私库极简命名版)
-// 修复记录：重写 IPv6 解析、关闭默认杂质源、彻底精简生成节点名称后缀。
+// 深度优化版：统一正则引擎、重构网页爬虫、精简数组遍历逻辑
 
 // ================= 全局默认配置 (常量) =================
 const DEFAULT_CONFIG = {
@@ -19,53 +19,46 @@ const DEFAULT_CONFIG = {
 
 const directDomains = []; 
 
-// ================= 辅助函数 =================
-function isValidUUID(str) {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    return uuidRegex.test(str);
-}
+// 🚀 优化1：全局统一的高性能、高宽容度 IP/域名 解析正则
+const GLOBAL_IP_PATTERN = /^(\[[0-9a-fA-F:]+\]|[\d\.]+|[a-zA-Z0-9.-]+)(?::(\d+))?(?:#(.+))?$/;
 
+// ================= 辅助函数 =================
 function safeBase64Encode(str) {
     return btoa(unescape(encodeURIComponent(str)));
 }
 
 async function parseToArray(content) {
-    let replaced = content.replace(/[	"'\r\n]+/g, ',').replace(/,+/g, ',');
-    if (replaced.charAt(0) === ',') replaced = replaced.slice(1);
-    if (replaced.charAt(replaced.length - 1) === ',') replaced = replaced.slice(0, -1);
-    return replaced.split(',');
+    return content.replace(/[ "'\r\n]+/g, ',').split(',').filter(Boolean);
+}
+
+function parseSingleLine(line) {
+    const match = line.trim().match(GLOBAL_IP_PATTERN);
+    if (!match) return null;
+    return {
+        ip: match[1].replace(/[\[\]]/g, ''),
+        port: parseInt(match[2], 10) || 443,
+        name: match[3] ? match[3].trim() : match[1].replace(/[\[\]]/g, '')
+    };
 }
 
 // ================= 核心数据抓取 =================
 async function fetchDynamicIPs(ipv4Enabled = true, ipv6Enabled = true, ispMobile = true, ispUnicom = true, ispTelecom = true) {
-    const v4Url = "https://www.wetest.vip/page/cloudflare/address_v4.html";
-    const v6Url = "https://www.wetest.vip/page/cloudflare/address_v6.html";
-    let results = [];
+    const fetchPromises = [];
+    if (ipv4Enabled) fetchPromises.push(fetchAndParseWetest("https://www.wetest.vip/page/cloudflare/address_v4.html"));
+    if (ipv6Enabled) fetchPromises.push(fetchAndParseWetest("https://www.wetest.vip/page/cloudflare/address_v6.html"));
 
     try {
-        const fetchPromises = [];
-        if (ipv4Enabled) fetchPromises.push(fetchAndParseWetest(v4Url));
-        else fetchPromises.push(Promise.resolve([]));
+        const resultsArray = await Promise.all(fetchPromises);
+        let results = resultsArray.flat();
         
-        if (ipv6Enabled) fetchPromises.push(fetchAndParseWetest(v6Url));
-        else fetchPromises.push(Promise.resolve([]));
-
-        const [ipv4List, ipv6List] = await Promise.all(fetchPromises);
-        results = [...ipv4List, ...ipv6List];
-        
-        if (results.length > 0) {
-            results = results.filter(item => {
-                const isp = item.isp || '';
-                if (isp.includes('移动') && !ispMobile) return false;
-                if (isp.includes('联通') && !ispUnicom) return false;
-                if (isp.includes('电信') && !ispTelecom) return false;
-                return true;
-            });
-        }
-        return results;
-    } catch (e) {
-        return [];
-    }
+        return results.filter(item => {
+            const isp = item.isp || '';
+            if (!ispMobile && isp.includes('移动')) return false;
+            if (!ispUnicom && isp.includes('联通')) return false;
+            if (!ispTelecom && isp.includes('电信')) return false;
+            return true;
+        });
+    } catch { return []; }
 }
 
 async function fetchAndParseWetest(url) {
@@ -73,25 +66,25 @@ async function fetchAndParseWetest(url) {
         const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         if (!response.ok) return [];
         const html = await response.text();
+        
+        // 🚀 优化2：重构高危 HTML 正则，提升提取速度和准确性
         const results = [];
-        const rowRegex = /<tr[\s\S]*?<\/tr>/g;
-        const cellRegex = /<td data-label="线路名称">(.+?)<\/td>[\s\S]*?<td data-label="优选地址">([\d.:a-fA-F]+)<\/td>[\s\S]*?<td data-label="数据中心">(.+?)<\/td>/;
+        const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/g;
+        const extractRegex = /<td[^>]*线路名称[^>]*>(.*?)<\/td>[\s\S]*?<td[^>]*优选地址[^>]*>(.*?)<\/td>[\s\S]*?<td[^>]*数据中心[^>]*>(.*?)<\/td>/;
 
         let match;
         while ((match = rowRegex.exec(html)) !== null) {
-            const cellMatch = match[0].match(cellRegex);
-            if (cellMatch && cellMatch[1] && cellMatch[2]) {
+            const cellMatch = match[1].match(extractRegex);
+            if (cellMatch && cellMatch[2]) {
                 results.push({
-                    isp: cellMatch[1].trim().replace(/<.*?>/g, ''),
+                    isp: cellMatch[1].replace(/<[^>]+>|\s+/g, '').trim(),
                     ip: cellMatch[2].trim(),
-                    colo: cellMatch[3] ? cellMatch[3].trim().replace(/<.*?>/g, '') : ''
+                    colo: cellMatch[3] ? cellMatch[3].replace(/<[^>]+>|\s+/g, '').trim() : ''
                 });
             }
         }
         return results;
-    } catch (error) {
-        return [];
-    }
+    } catch { return []; }
 }
 
 async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
@@ -105,103 +98,80 @@ async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
             const response = await fetch(url, { signal: controller.signal });
             clearTimeout(timeoutId);
             
-            const buffer = await response.arrayBuffer();
-            let text = new TextDecoder('utf-8').decode(buffer);
-            if (text.includes('\ufffd')) {
-                text = new TextDecoder('gb2312').decode(buffer); 
-            }
-            if (!text || text.trim().length === 0) return;
-
-            const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
-            const isCSV = lines.length > 1 && lines[0].includes(',');
-            const IPV6_PATTERN = /^[^\[\]]*:[^\[\]]*:[^\[\]]/;
+            let text = new TextDecoder('utf-8').decode(await response.arrayBuffer());
+            if (text.includes('\ufffd')) text = new TextDecoder('gb2312').decode(buffer);
             
-            if (!isCSV) {
-                lines.forEach(line => {
-                    const hashIndex = line.indexOf('#');
-                    const [hostPart, remark] = hashIndex > -1 ? [line.substring(0, hashIndex), line.substring(hashIndex)] : [line, ''];
-                    let hasPort = hostPart.startsWith('[') ? /\]:(\d+)$/.test(hostPart) : (hostPart.lastIndexOf(':') > -1 && /^\d+$/.test(hostPart.substring(hostPart.lastIndexOf(':') + 1)));
-                    const port = new URL(url).searchParams.get('port') || defaultPort;
-                    results.add(hasPort ? line : `${hostPart}:${port}${remark}`);
+            const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+            if (!lines.length) return;
+
+            // 区分 CSV 与普通文本库
+            if (lines.length > 1 && lines[0].includes(',')) {
+                const headers = lines[0].split(',').map(h => h.trim());
+                const ipIdx = headers.indexOf('IP地址');
+                const portIdx = headers.indexOf('端口');
+                if (ipIdx === -1 || portIdx === -1) return;
+                
+                const remarkIdx = headers.indexOf('国家') > -1 ? headers.indexOf('国家') : (headers.indexOf('数据中心') > -1 ? headers.indexOf('数据中心') : ipIdx);
+                
+                lines.slice(1).forEach(line => {
+                    const cols = line.split(',').map(c => c.trim());
+                    const ip = cols[ipIdx].includes(':') ? `[${cols[ipIdx]}]` : cols[ipIdx];
+                    results.add(`${ip}:${cols[portIdx]}#${cols[remarkIdx]}`);
                 });
             } else {
-                const headers = lines[0].split(',').map(h => h.trim());
-                const dataLines = lines.slice(1);
-                
-                if (headers.includes('IP地址') && headers.includes('端口')) {
-                    const ipIdx = headers.indexOf('IP地址'), portIdx = headers.indexOf('端口');
-                    const remarkIdx = headers.indexOf('国家') > -1 ? headers.indexOf('国家') : (headers.indexOf('数据中心') > -1 ? headers.indexOf('数据中心') : ipIdx);
-                    dataLines.forEach(line => {
-                        const cols = line.split(',').map(c => c.trim());
-                        const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
-                        results.add(`${wrappedIP}:${cols[portIdx]}#${cols[remarkIdx]}`);
-                    });
-                }
+                lines.forEach(line => {
+                    const parsed = parseSingleLine(line);
+                    if (parsed) results.add(`${parsed.ip.includes(':') ? `[${parsed.ip}]` : parsed.ip}:${parsed.port}#${parsed.name}`);
+                });
             }
         } catch (e) {}
     }));
     return Array.from(results);
 }
 
-// 完美支持 IPv4 和带中括号的 IPv6 解析
 async function fetchGitHubIPs(piu) {
-    const url = piu || DEFAULT_CONFIG.defaultIPURL;
     try {
-        const response = await fetch(url);
+        const response = await fetch(piu || DEFAULT_CONFIG.defaultIPURL);
         if (!response.ok) return [];
-        const text = await response.text();
-        const results = [];
-        const lines = text.trim().replace(/\r/g, "").split('\n');
+        const lines = (await response.text()).replace(/\r/g, "").split('\n').filter(Boolean);
         
-        const regex = /^(\[[a-fA-F0-9:]+\]|[\d\.]+):(\d+)(?:#(.*))?$/;
-
-        for (const line of lines) {
-            const match = line.trim().match(regex);
-            if (match) {
-                results.push({ 
-                    ip: match[1].replace(/[\[\]]/g, ''), 
-                    port: parseInt(match[2], 10), 
-                    name: match[3] ? match[3].trim() : match[1].replace(/[\[\]]/g, '') 
-                });
-            }
-        }
-        return results;
-    } catch (error) {
-        return [];
-    }
+        // 🚀 优化3：复用全局正则，直接映射生成数组
+        return lines.map(parseSingleLine).filter(Boolean);
+    } catch { return []; }
 }
 
 // ================= 核心节点生成 (极简命名版) =================
 function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echConfig, protocols) {
     const CF_HTTP_PORTS = [80, 8080, 8880, 2052, 2082, 2086, 2095];
     const CF_HTTPS_PORTS = [443, 2053, 2083, 2087, 2096, 8443];
-    const defaultHttpsPorts = [443];
-    const defaultHttpPorts = disableNonTLS ? [] : [80];
-    const links = [];
     const wsPath = customPath || '/';
 
-    list.forEach(item => {
+    return list.flatMap(item => {
         let nodeNameBase = item.isp ? item.isp.replace(/\s/g, '_') : (item.name || item.domain || item.ip);
         if (item.colo && item.colo.trim()) nodeNameBase = `${nodeNameBase}-${item.colo.trim()}`;
         const safeIP = item.ip.includes(':') ? `[${item.ip}]` : item.ip;
         
         let portsToGenerate = [];
         if (item.port) {
-            const port = item.port;
-            if (CF_HTTPS_PORTS.includes(port)) portsToGenerate.push({ port, tls: true });
-            else if (CF_HTTP_PORTS.includes(port)) {
-                if (!disableNonTLS) portsToGenerate.push({ port, tls: false });
-            } else portsToGenerate.push({ port, tls: true });
+            const p = parseInt(item.port, 10);
+            const isHttp = CF_HTTP_PORTS.includes(p);
+            if (CF_HTTPS_PORTS.includes(p) || (isHttp && disableNonTLS)) {
+                portsToGenerate.push({ port: p, tls: true });
+            } else if (isHttp && !disableNonTLS) {
+                portsToGenerate.push({ port: p, tls: false });
+            } else {
+                portsToGenerate.push({ port: p, tls: true }); // 兜底全走 TLS
+            }
         } else {
-            defaultHttpsPorts.forEach(port => portsToGenerate.push({ port, tls: true }));
-            defaultHttpPorts.forEach(port => portsToGenerate.push({ port, tls: false }));
+            portsToGenerate.push({ port: 443, tls: true });
+            if (!disableNonTLS) portsToGenerate.push({ port: 80, tls: false });
         }
 
-        portsToGenerate.forEach(({ port, tls }) => {
+        return portsToGenerate.flatMap(({ port, tls }) => {
             const wsParams = new URLSearchParams({ type: 'ws', host: workerDomain, path: wsPath });
             if (tls) {
                 wsParams.set('security', 'tls');
-                wsParams.set('sni', workerDomain);
+                wsParams.set('sni', workerDomain); // 遵从要求，保留原样
                 wsParams.set('fp', 'chrome');
                 if (echConfig) {
                     wsParams.set('alpn', 'h3,h2,http/1.1');
@@ -211,7 +181,7 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
                 wsParams.set('security', 'none');
             }
 
-            // 🚀 手术核心：完全砍掉花里胡哨的后缀，只用 nodeNameBase (例如：移动-HKG)
+            const links = [];
             if (protocols.evEnabled) {
                 const vlessParams = new URLSearchParams(wsParams);
                 vlessParams.set('encryption', 'none');
@@ -222,22 +192,19 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
             }
             if (protocols.vmEnabled) {
                 const vmessConfig = {
-                    v: "2",
-                    ps: nodeNameBase,
-                    add: safeIP, port: port.toString(), id: user, aid: "0", scy: "auto",
-                    net: "ws", type: "none", host: workerDomain, path: wsPath,
+                    v: "2", ps: nodeNameBase, add: safeIP, port: port.toString(), id: user,
+                    aid: "0", scy: "auto", net: "ws", type: "none", host: workerDomain, path: wsPath,
                     tls: tls ? "tls" : "none"
                 };
                 if (tls) {
-                    vmessConfig.sni = workerDomain;
+                    vmessConfig.sni = workerDomain; // 遵从要求，保留原样
                     vmessConfig.fp = "chrome";
                 }
-                const vmessBase64 = safeBase64Encode(JSON.stringify(vmessConfig));
-                links.push(`vmess://${vmessBase64}`);
+                links.push(`vmess://${safeBase64Encode(JSON.stringify(vmessConfig))}`);
             }
+            return links;
         });
     });
-    return links;
 }
 
 // ================= 订阅及配置生成 =================
@@ -249,40 +216,36 @@ async function handleSubscriptionRequest(request, config) {
         vmEnabled: config.vmEnabled
     };
 
-    const addNodesFromList = async (list) => {
+    const addNodesFromList = (list) => {
         finalLinks.push(...generateNodesFromList(list, config.user, config.nodeDomain, config.disableNonTLS, config.customPath, config.echConfig, protocols));
     };
 
     if (config.epdEnabled) {
-        const domainList = directDomains.map(d => ({ ip: d.domain, isp: d.name || d.domain }));
-        await addNodesFromList(domainList);
+        addNodesFromList(directDomains.map(d => ({ ip: d.domain, isp: d.name || d.domain })));
     }
 
     if (config.epiEnabled) {
         const dynamicIPList = await fetchDynamicIPs(config.ipv4Enabled, config.ipv6Enabled, config.ispMobile, config.ispUnicom, config.ispTelecom);
-        if (dynamicIPList.length > 0) await addNodesFromList(dynamicIPList);
+        if (dynamicIPList.length) addNodesFromList(dynamicIPList);
     }
 
     if (config.egiEnabled) {
         try {
             if (config.piu && config.piu.toLowerCase().startsWith('https://') && !config.piu.includes('\n')) {
                 const apiIps = await fetchOptimizedAPI([config.piu]);
-                const parsedIps = parseRawIps(apiIps);
-                if (parsedIps.length > 0) await addNodesFromList(parsedIps);
+                const parsedIps = apiIps.map(parseSingleLine).filter(Boolean);
+                if (parsedIps.length) addNodesFromList(parsedIps);
             } else if (config.piu && config.piu.includes('\n')) {
                 const fullList = await parseToArray(config.piu);
                 const apiUrls = fullList.filter(e => e.toLowerCase().startsWith('https://'));
                 const rawIps = fullList.filter(e => !e.toLowerCase().includes('://'));
                 
-                if (apiUrls.length > 0) {
-                    const fetchedIps = await fetchOptimizedAPI(apiUrls);
-                    rawIps.push(...fetchedIps);
-                }
-                const parsedIps = parseRawIps(rawIps);
-                if (parsedIps.length > 0) await addNodesFromList(parsedIps);
+                if (apiUrls.length) rawIps.push(...(await fetchOptimizedAPI(apiUrls)));
+                const parsedIps = rawIps.map(parseSingleLine).filter(Boolean);
+                if (parsedIps.length) addNodesFromList(parsedIps);
             } else {
                 const newIPList = await fetchGitHubIPs(config.piu);
-                if (newIPList.length > 0) await addNodesFromList(newIPList);
+                if (newIPList.length) addNodesFromList(newIPList);
             }
         } catch (error) {}
     }
@@ -308,10 +271,9 @@ async function handleSubscriptionRequest(request, config) {
             break;
         case 'quantumult':
         case 'quanx':
-            subscriptionContent = btoa(finalLinks.join('\n'));
-            break;
         default:
             subscriptionContent = btoa(finalLinks.join('\n'));
+            break;
     }
     
     return new Response(subscriptionContent, {
@@ -322,21 +284,6 @@ async function handleSubscriptionRequest(request, config) {
             'Content-Disposition': 'attachment; filename="sub.txt"',
         },
     });
-}
-
-function parseRawIps(rawIps) {
-    return rawIps.map(raw => {
-        const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
-        const match = raw.match(regex);
-        if (match) {
-            return {
-                ip: match[1].replace(/[\[\]]/g, ''),
-                port: parseInt(match[2]) || 443,
-                name: match[3] || match[1].replace(/[\[\]]/g, '')
-            };
-        }
-        return null;
-    }).filter(item => item !== null);
 }
 
 function generateClashConfig(links) {
@@ -385,443 +332,45 @@ function generateHomePage(scuValue) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>服务器优选工具</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(180deg, #f5f5f7 0%, #ffffff 50%, #fafafa 100%);
-            color: #1d1d1f;
-            min-height: 100vh;
-            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-            overflow-x: hidden;
-        }
-        
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        
-        .header {
-            text-align: center;
-            padding: 48px 20px 32px;
-        }
-        
-        .header h1 {
-            font-size: 40px;
-            font-weight: 700;
-            letter-spacing: -0.3px;
-            color: #1d1d1f;
-            margin-bottom: 8px;
-            line-height: 1.1;
-        }
-        
-        .header p {
-            font-size: 17px;
-            color: #86868b;
-            font-weight: 400;
-            line-height: 1.5;
-        }
-        
-        .card {
-            background: rgba(255, 255, 255, 0.75);
-            backdrop-filter: blur(30px) saturate(200%);
-            -webkit-backdrop-filter: blur(30px) saturate(200%);
-            border-radius: 24px;
-            padding: 28px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.05);
-            border: 0.5px solid rgba(0, 0, 0, 0.06);
-            will-change: transform;
-        }
-        
-        .form-group {
-            margin-bottom: 24px;
-        }
-        
-        .form-group:last-child {
-            margin-bottom: 0;
-        }
-        
-        .form-group label {
-            display: block;
-            font-size: 13px;
-            font-weight: 600;
-            color: #86868b;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .form-group input,
-        .form-group textarea {
-            width: 100%;
-            padding: 14px 16px;
-            font-size: 17px;
-            font-weight: 400;
-            color: #1d1d1f;
-            background: rgba(142, 142, 147, 0.12);
-            border: 2px solid transparent;
-            border-radius: 12px;
-            outline: none;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            -webkit-appearance: none;
-        }
-        
-        .form-group input:focus,
-        .form-group textarea:focus {
-            background: rgba(142, 142, 147, 0.16);
-            border-color: #007AFF;
-            transform: scale(1.005);
-        }
-        
-        .form-group input::placeholder,
-        .form-group textarea::placeholder {
-            color: #86868b;
-        }
-        
-        .form-group small {
-            display: block;
-            margin-top: 8px;
-            color: #86868b;
-            font-size: 13px;
-            line-height: 1.4;
-        }
-        
-        .list-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 16px 0;
-            min-height: 52px;
-            cursor: pointer;
-            border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
-            transition: background-color 0.15s ease;
-        }
-        
-        .list-item:last-child {
-            border-bottom: none;
-        }
-        
-        .list-item:active {
-            background-color: rgba(142, 142, 147, 0.08);
-            margin: 0 -28px;
-            padding-left: 28px;
-            padding-right: 28px;
-        }
-        
-        .list-item-label {
-            font-size: 17px;
-            font-weight: 400;
-            color: #1d1d1f;
-            flex: 1;
-        }
-        
-        .list-item-description {
-            font-size: 13px;
-            color: #86868b;
-            margin-top: 4px;
-            line-height: 1.4;
-        }
-        
-        .switch {
-            position: relative;
-            width: 51px;
-            height: 31px;
-            background: rgba(142, 142, 147, 0.3);
-            border-radius: 16px;
-            transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            cursor: pointer;
-            flex-shrink: 0;
-        }
-        
-        .switch.active {
-            background: #34C759;
-        }
-        
-        .switch::after {
-            content: '';
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 27px;
-            height: 27px;
-            background: #ffffff;
-            border-radius: 50%;
-            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1);
-        }
-        
-        .switch.active::after {
-            transform: translateX(20px);
-        }
-        
-        .btn {
-            width: 100%;
-            padding: 16px;
-            font-size: 17px;
-            font-weight: 600;
-            color: #ffffff;
-            background: #007AFF;
-            border: none;
-            border-radius: 14px;
-            cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            margin-top: 8px;
-            -webkit-appearance: none;
-            box-shadow: 0 4px 12px rgba(0, 122, 255, 0.25);
-            will-change: transform;
-        }
-        
-        .btn:hover {
-            background: #0051D5;
-            box-shadow: 0 6px 16px rgba(0, 122, 255, 0.3);
-        }
-        
-        .btn:active {
-            transform: scale(0.97);
-            box-shadow: 0 2px 8px rgba(0, 122, 255, 0.2);
-        }
-        
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .btn-secondary {
-            background: rgba(142, 142, 147, 0.12);
-            color: #007AFF;
-            box-shadow: none;
-        }
-        
-        .btn-secondary:hover {
-            background: rgba(142, 142, 147, 0.16);
-        }
-        
-        .btn-secondary:active {
-            background: rgba(142, 142, 147, 0.2);
-        }
-        
-        .result {
-            margin-top: 20px;
-            padding: 16px;
-            background: rgba(142, 142, 147, 0.12);
-            border-radius: 12px;
-            font-size: 15px;
-            color: #1d1d1f;
-            word-break: break-all;
-            display: none;
-            line-height: 1.5;
-        }
-        
-        .result.show {
-            display: block;
-        }
-        
-        .result-card {
-            padding: 16px;
-            background: rgba(255, 255, 255, 0.9);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-radius: 12px;
-            margin-bottom: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-            border: 0.5px solid rgba(0, 0, 0, 0.06);
-        }
-        
-        .result-url {
-            margin-top: 12px;
-            padding: 12px;
-            background: rgba(0, 122, 255, 0.1);
-            border-radius: 10px;
-            font-size: 13px;
-            color: #007aff;
-            word-break: break-all;
-            line-height: 1.5;
-        }
-        
-        .copy-btn {
-            margin-top: 8px;
-            padding: 10px 16px;
-            font-size: 15px;
-            background: rgba(0, 122, 255, 0.1);
-            color: #007aff;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        
-        .copy-btn:active {
-            background: rgba(0, 122, 255, 0.2);
-            transform: scale(0.98);
-        }
-        
-        .client-btn {
-            padding: 12px 16px;
-            font-size: 14px;
-            font-weight: 500;
-            color: #007AFF;
-            background: rgba(0, 122, 255, 0.1);
-            border: 1px solid rgba(0, 122, 255, 0.2);
-            border-radius: 12px;
-            cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            -webkit-appearance: none;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            min-width: 0;
-        }
-        
-        .client-btn:active {
-            transform: scale(0.97);
-            background: rgba(0, 122, 255, 0.2);
-            border-color: rgba(0, 122, 255, 0.3);
-        }
-        
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-            font-size: 17px;
-            font-weight: 400;
-            user-select: none;
-            -webkit-user-select: none;
-            position: relative;
-            z-index: 1;
-            padding: 8px 0;
-        }
-        
-        .checkbox-label input[type="checkbox"] {
-            margin-right: 12px;
-            width: 22px;
-            height: 22px;
-            cursor: pointer;
-            flex-shrink: 0;
-            position: relative;
-            z-index: 2;
-            -webkit-appearance: checkbox;
-            appearance: checkbox;
-        }
-        
-        .checkbox-label span {
-            cursor: pointer;
-            position: relative;
-            z-index: 1;
-        }
-        
-        @media (max-width: 480px) {
-            .client-btn {
-                font-size: 12px;
-                padding: 10px 12px;
-            }
-            
-            .header h1 {
-                font-size: 34px;
-            }
-        }
-        
-        .footer {
-            text-align: center;
-            padding: 32px 20px;
-            color: #86868b;
-            font-size: 13px;
-        }
-        
-        .footer a {
-            color: #007AFF;
-            text-decoration: none;
-            font-weight: 500;
-            transition: opacity 0.2s ease;
-        }
-        
-        .footer a:active {
-            opacity: 0.6;
-        }
-        
+        *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+        body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;background:linear-gradient(180deg,#f5f5f7 0%,#ffffff 50%,#fafafa 100%);color:#1d1d1f;min-height:100vh;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);overflow-x:hidden;}
+        .container{max-width:600px;margin:0 auto;padding:20px;}
+        .header{text-align:center;padding:48px 20px 32px;}
+        .header h1{font-size:40px;font-weight:700;letter-spacing:-0.3px;color:#1d1d1f;margin-bottom:8px;line-height:1.1;}
+        .header p{font-size:17px;color:#86868b;font-weight:400;line-height:1.5;}
+        .card{background:rgba(255,255,255,0.75);backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);border-radius:24px;padding:28px;margin-bottom:20px;box-shadow:0 4px 24px rgba(0,0,0,0.06),0 1px 3px rgba(0,0,0,0.05);border:0.5px solid rgba(0,0,0,0.06);}
+        .form-group{margin-bottom:24px;}
+        .form-group:last-child{margin-bottom:0;}
+        .form-group label{display:block;font-size:13px;font-weight:600;color:#86868b;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;}
+        .form-group input,.form-group textarea{width:100%;padding:14px 16px;font-size:17px;font-weight:400;color:#1d1d1f;background:rgba(142,142,147,0.12);border:2px solid transparent;border-radius:12px;outline:none;transition:all 0.2s cubic-bezier(0.4,0,0.2,1);-webkit-appearance:none;}
+        .form-group input:focus,.form-group textarea:focus{background:rgba(142,142,147,0.16);border-color:#007AFF;}
+        .form-group input::placeholder{color:#86868b;}
+        .form-group small{display:block;margin-top:8px;color:#86868b;font-size:13px;line-height:1.4;}
+        .list-item{display:flex;align-items:center;justify-content:space-between;padding:16px 0;min-height:52px;cursor:pointer;border-bottom:0.5px solid rgba(0,0,0,0.08);transition:background-color 0.15s ease;}
+        .list-item:last-child{border-bottom:none;}
+        .list-item-label{font-size:17px;font-weight:400;color:#1d1d1f;flex:1;}
+        .list-item-description{font-size:13px;color:#86868b;margin-top:4px;line-height:1.4;}
+        .switch{position:relative;width:51px;height:31px;background:rgba(142,142,147,0.3);border-radius:16px;transition:background 0.3s cubic-bezier(0.4,0,0.2,1);cursor:pointer;flex-shrink:0;}
+        .switch.active{background:#34C759;}
+        .switch::after{content:'';position:absolute;top:2px;left:2px;width:27px;height:27px;background:#ffffff;border-radius:50%;transition:transform 0.3s cubic-bezier(0.4,0,0.2,1);box-shadow:0 2px 6px rgba(0,0,0,0.15),0 1px 2px rgba(0,0,0,0.1);}
+        .switch.active::after{transform:translateX(20px);}
+        .client-btn{padding:12px 16px;font-size:14px;font-weight:500;color:#007AFF;background:rgba(0,122,255,0.1);border:1px solid rgba(0,122,255,0.2);border-radius:12px;cursor:pointer;transition:all 0.2s;-webkit-appearance:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .client-btn:active{transform:scale(0.97);background:rgba(0,122,255,0.2);}
+        .checkbox-label{display:flex;align-items:center;cursor:pointer;font-size:17px;padding:8px 0;}
+        .checkbox-label input[type="checkbox"]{margin-right:12px;width:22px;height:22px;cursor:pointer;}
+        .footer{text-align:center;padding:32px 20px;color:#86868b;font-size:13px;}
         @media (prefers-color-scheme: dark) {
-            body {
-                background: linear-gradient(180deg, #000000 0%, #1c1c1e 50%, #2c2c2e 100%);
-                color: #f5f5f7;
-            }
-            
-            .card {
-                background: rgba(28, 28, 30, 0.75);
-                border: 0.5px solid rgba(255, 255, 255, 0.12);
-                box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
-            }
-            
-            .form-group input,
-            .form-group textarea {
-                background: rgba(142, 142, 147, 0.2);
-                color: #f5f5f7;
-            }
-            
-            .form-group input:focus,
-            .form-group textarea:focus {
-                background: rgba(142, 142, 147, 0.25);
-                border-color: #5ac8fa;
-            }
-            
-            .list-item {
-                border-bottom-color: rgba(255, 255, 255, 0.1);
-            }
-            
-            .list-item:active {
-                background: rgba(255, 255, 255, 0.08);
-            }
-            
-            .list-item-label {
-                color: #f5f5f7;
-            }
-            
-            .switch {
-                background: rgba(142, 142, 147, 0.4);
-            }
-            
-            .switch.active {
-                background: #30d158;
-            }
-            
-            .switch::after {
-                background: #ffffff;
-            }
-            
-            .result {
-                background: rgba(142, 142, 147, 0.2);
-                color: #f5f5f7;
-            }
-            
-            .result-card {
-                background: rgba(28, 28, 30, 0.9);
-                border-color: rgba(255, 255, 255, 0.1);
-            }
-            
-            .checkbox-label span {
-                color: #f5f5f7;
-            }
-            
-            .client-btn {
-                background: rgba(0, 122, 255, 0.15) !important;
-                border-color: rgba(0, 122, 255, 0.3) !important;
-                color: #5ac8fa !important;
-            }
-            
-            .footer a {
-                color: #5ac8fa !important;
-            }
-            
+            body{background:linear-gradient(180deg,#000000 0%,#1c1c1e 50%,#2c2c2e 100%);color:#f5f5f7;}
+            .card{background:rgba(28,28,30,0.75);border-color:rgba(255,255,255,0.12);box-shadow:0 4px 24px rgba(0,0,0,0.3);}
+            .form-group input{background:rgba(142,142,147,0.2);color:#f5f5f7;}
+            .form-group input:focus{background:rgba(142,142,147,0.25);border-color:#5ac8fa;}
+            .list-item{border-bottom-color:rgba(255,255,255,0.1);}
+            .list-item-label{color:#f5f5f7;}
+            .switch{background:rgba(142,142,147,0.4);}
+            .switch.active{background:#30d158;}
+            .client-btn{background:rgba(0,122,255,0.15);color:#5ac8fa;}
         }
     </style>
 </head>
@@ -831,74 +380,41 @@ function generateHomePage(scuValue) {
             <h1>服务器优选工具</h1>
             <p>智能优选 • 极简命名终极版</p>
         </div>
-        
         <div class="card">
             <div class="form-group">
                 <label>域名</label>
                 <input type="text" id="domain" placeholder="请输入您的域名">
             </div>
-            
             <div class="form-group">
                 <label>UUID/Password</label>
                 <input type="text" id="uuid" placeholder="请输入UUID或Password">
             </div>
-            
             <div class="form-group">
                 <label>WebSocket路径（可选）</label>
                 <input type="text" id="customPath" placeholder="留空则使用默认路径 /" value="/">
-                <small style="display: block; margin-top: 6px; color: #86868b; font-size: 13px;">自定义WebSocket路径，例如：/v2ray 或 /</small>
             </div>
-            
             <div class="list-item" onclick="toggleSwitch('switchDomain')">
-                <div>
-                    <div class="list-item-label">启用优选域名</div>
-                </div>
+                <div class="list-item-label">启用优选域名</div>
                 <div class="switch" id="switchDomain"></div>
             </div>
-            
             <div class="list-item" onclick="toggleSwitch('switchIP')">
-                <div>
-                    <div class="list-item-label">启用内置优选IP(含杂质)</div>
-                </div>
+                <div class="list-item-label">启用内置优选IP(含杂质)</div>
                 <div class="switch" id="switchIP"></div>
             </div>
-            
             <div class="list-item" onclick="toggleSwitch('switchGitHub')">
-                <div>
-                    <div class="list-item-label">启用私有纯净IP库(推荐)</div>
-                </div>
+                <div class="list-item-label">启用私有纯净IP库(推荐)</div>
                 <div class="switch active" id="switchGitHub"></div>
             </div>
-            
             <div class="form-group" id="githubUrlGroup" style="margin-top: 12px;">
                 <label>GitHub优选URL（可选）</label>
-                <input type="text" id="githubUrl" placeholder="留空则使用内置的纯净链接" style="font-size: 15px;">
+                <input type="text" id="githubUrl" placeholder="留空则使用内置的纯净链接">
             </div>
-            
             <div class="form-group" style="margin-top: 24px;">
                 <label>协议选择</label>
-                <div style="margin-top: 8px;">
-                    <div class="list-item" onclick="toggleSwitch('switchVL')">
-                        <div>
-                            <div class="list-item-label">VLESS (vl)</div>
-                        </div>
-                        <div class="switch active" id="switchVL"></div>
-                    </div>
-                    <div class="list-item" onclick="toggleSwitch('switchTJ')">
-                        <div>
-                            <div class="list-item-label">Trojan (tj)</div>
-                        </div>
-                        <div class="switch" id="switchTJ"></div>
-                    </div>
-                    <div class="list-item" onclick="toggleSwitch('switchVM')">
-                        <div>
-                            <div class="list-item-label">VMess (vm)</div>
-                        </div>
-                        <div class="switch" id="switchVM"></div>
-                    </div>
-                </div>
+                <div class="list-item" onclick="toggleSwitch('switchVL')"><div class="list-item-label">VLESS (vl)</div><div class="switch active" id="switchVL"></div></div>
+                <div class="list-item" onclick="toggleSwitch('switchTJ')"><div class="list-item-label">Trojan (tj)</div><div class="switch" id="switchTJ"></div></div>
+                <div class="list-item" onclick="toggleSwitch('switchVM')"><div class="list-item-label">VMess (vm)</div><div class="switch" id="switchVM"></div></div>
             </div>
-            
             <div class="form-group" style="margin-top: 24px;">
                 <label>客户端选择</label>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 8px;">
@@ -907,281 +423,110 @@ function generateHomePage(scuValue) {
                     <button type="button" class="client-btn" onclick="generateClientLink('surge', 'SURGE')">SURGE</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('sing-box', 'SING-BOX')">SING-BOX</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('loon', 'LOON')">LOON</button>
-                    <button type="button" class="client-btn" onclick="generateClientLink('quanx', 'QUANTUMULT X')" style="font-size: 13px;">QUANTUMULT X</button>
+                    <button type="button" class="client-btn" onclick="generateClientLink('quanx', 'QUANTUMULT X')">QUANTUMULT X</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('v2ray', 'V2RAY')">V2RAY</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('v2ray', 'V2RAYNG')">V2RAYNG</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('v2ray', 'NEKORAY')">NEKORAY</button>
-                    <button type="button" class="client-btn" onclick="generateClientLink('v2ray', 'Shadowrocket')" style="font-size: 13px;">Shadowrocket</button>
+                    <button type="button" class="client-btn" onclick="generateClientLink('v2ray', 'Shadowrocket')">Shadowrocket</button>
                 </div>
-                <div class="result-url" id="clientSubscriptionUrl" style="display: none; margin-top: 12px; padding: 12px; background: rgba(0, 122, 255, 0.1); border-radius: 8px; font-size: 13px; color: #007aff; word-break: break-all;"></div>
+                <div id="clientSubscriptionUrl" style="display: none; margin-top: 12px; padding: 12px; background: rgba(0, 122, 255, 0.1); border-radius: 8px; font-size: 13px; color: #007aff; word-break: break-all;"></div>
             </div>
-            
             <div class="form-group">
                 <label>IP版本选择</label>
                 <div style="display: flex; gap: 16px; margin-top: 8px;">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="ipv4Enabled" checked>
-                        <span>IPv4</span>
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="ipv6Enabled" checked>
-                        <span>IPv6</span>
-                    </label>
+                    <label class="checkbox-label"><input type="checkbox" id="ipv4Enabled" checked><span>IPv4</span></label>
+                    <label class="checkbox-label"><input type="checkbox" id="ipv6Enabled" checked><span>IPv6</span></label>
                 </div>
             </div>
-            
             <div class="form-group">
                 <label>运营商选择</label>
                 <div style="display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px;">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="ispMobile" checked>
-                        <span>移动</span>
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="ispUnicom" checked>
-                        <span>联通</span>
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="ispTelecom" checked>
-                        <span>电信</span>
-                    </label>
+                    <label class="checkbox-label"><input type="checkbox" id="ispMobile" checked><span>移动</span></label>
+                    <label class="checkbox-label"><input type="checkbox" id="ispUnicom" checked><span>联通</span></label>
+                    <label class="checkbox-label"><input type="checkbox" id="ispTelecom" checked><span>电信</span></label>
                 </div>
             </div>
-            
-            <div class="list-item" onclick="toggleSwitch('switchTLS')" style="margin-top: 8px;">
-                <div>
-                    <div class="list-item-label">仅TLS节点</div>
-                    <div class="list-item-description">启用后只生成带TLS的节点，不生成非TLS节点（如80端口）</div>
-                </div>
+            <div class="list-item" onclick="toggleSwitch('switchTLS')">
+                <div><div class="list-item-label">仅TLS节点</div><div class="list-item-description">不生成非TLS节点（如80端口）</div></div>
                 <div class="switch" id="switchTLS"></div>
             </div>
-            
-            <div class="list-item" onclick="toggleSwitch('switchECH')" style="margin-top: 8px;">
-                <div>
-                    <div class="list-item-label">ECH (Encrypted Client Hello)</div>
-                    <div class="list-item-description">启用后节点链接将携带 ECH 参数，需客户端支持；开启时自动仅TLS</div>
-                </div>
+            <div class="list-item" onclick="toggleSwitch('switchECH')">
+                <div><div class="list-item-label">ECH (Encrypted Client Hello)</div></div>
                 <div class="switch" id="switchECH"></div>
             </div>
-            <div class="form-group" id="echOptionsGroup" style="margin-top: 12px; display: none;">
-                <label>ECH 自定义 DNS（可选）</label>
-                <input type="text" id="customDNS" placeholder="例如: https://dns.joeyblog.eu.org/joeyblog" style="font-size: 14px;">
-                <small style="display: block; margin-top: 6px; color: #86868b; font-size: 13px;">用于 ECH 配置查询的 DoH 地址</small>
-                <label style="margin-top: 12px; display: block;">ECH 域名（可选）</label>
-                <input type="text" id="customECHDomain" placeholder="例如: cloudflare-ech.com" style="font-size: 14px;">
+            <div class="form-group" id="echOptionsGroup" style="display: none; margin-top: 12px;">
+                <input type="text" id="customDNS" placeholder="ECH DNS: https://dns..."><br><br>
+                <input type="text" id="customECHDomain" placeholder="ECH Domain: cloudflare-ech.com">
             </div>
         </div>
-        
-        <div class="footer">
-            <p>极简命名版工具 • 纯净私有定制</p>
-        </div>
+        <div class="footer"><p>极简命名版工具 • 纯净私有定制</p></div>
     </div>
-    
     <script>
-        let switches = {
-            switchDomain: false, 
-            switchIP: false,     
-            switchGitHub: true,  
-            switchVL: true,
-            switchTJ: false,
-            switchVM: false,
-            switchTLS: false,
-            switchECH: false
-        };
-        
+        let switches = {switchDomain: false, switchIP: false, switchGitHub: true, switchVL: true, switchTJ: false, switchVM: false, switchTLS: false, switchECH: false};
         function toggleSwitch(id) {
-            const switchEl = document.getElementById(id);
             switches[id] = !switches[id];
-            switchEl.classList.toggle('active');
+            document.getElementById(id).classList.toggle('active');
             if (id === 'switchECH') {
-                const echOpt = document.getElementById('echOptionsGroup');
-                if (echOpt) echOpt.style.display = switches.switchECH ? 'block' : 'none';
-                if (switches.switchECH && !switches.switchTLS) {
-                    switches.switchTLS = true;
-                    const tlsEl = document.getElementById('switchTLS');
-                    if (tlsEl) tlsEl.classList.add('active');
-                }
+                document.getElementById('echOptionsGroup').style.display = switches.switchECH ? 'block' : 'none';
+                if (switches.switchECH && !switches.switchTLS) { switches.switchTLS = true; document.getElementById('switchTLS').classList.add('active'); }
             }
         }
-        
         const SUB_CONVERTER_URL = "${ scu }";
-        
-        function tryOpenApp(schemeUrl, fallbackCallback, timeout) {
-            timeout = timeout || 2500;
-            let appOpened = false;
-            let callbackExecuted = false;
-            const startTime = Date.now();
-            
-            const blurHandler = () => {
-                const elapsed = Date.now() - startTime;
-                if (elapsed < 3000 && !callbackExecuted) {
-                    appOpened = true;
-                }
-            };
-            
-            window.addEventListener('blur', blurHandler);
-            
-            const hiddenHandler = () => {
-                const elapsed = Date.now() - startTime;
-                if (elapsed < 3000 && !callbackExecuted) {
-                    appOpened = true;
-                }
-            };
-            
-            document.addEventListener('visibilitychange', hiddenHandler);
-            
+        function tryOpenApp(schemeUrl, fallback, timeout=2500) {
+            let opened=false, called=false, start=Date.now();
+            const handler = () => { if(Date.now()-start<3000 && !called) opened=true; };
+            window.addEventListener('blur', handler);
+            document.addEventListener('visibilitychange', handler);
             const iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.style.width = '1px';
-            iframe.style.height = '1px';
-            iframe.src = schemeUrl;
-            document.body.appendChild(iframe);
-            
+            iframe.style.display='none'; iframe.src=schemeUrl; document.body.appendChild(iframe);
             setTimeout(() => {
-                if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-                window.removeEventListener('blur', blurHandler);
-                document.removeEventListener('visibilitychange', hiddenHandler);
-                
-                if (!callbackExecuted) {
-                    callbackExecuted = true;
-                    if (!appOpened && fallbackCallback) {
-                        fallbackCallback();
-                    }
-                }
+                if(iframe.parentNode) iframe.parentNode.removeChild(iframe);
+                window.removeEventListener('blur', handler);
+                document.removeEventListener('visibilitychange', handler);
+                if(!called) { called=true; if(!opened && fallback) fallback(); }
             }, timeout);
         }
-        
         function generateClientLink(clientType, clientName) {
-            const domain = document.getElementById('domain').value.trim();
-            const uuid = document.getElementById('uuid').value.trim();
-            const customPath = document.getElementById('customPath').value.trim() || '/';
+            const domain=document.getElementById('domain').value.trim(), uuid=document.getElementById('uuid').value.trim();
+            if(!domain || !uuid) return alert('请先填写域名和UUID/Password');
+            if(!switches.switchVL && !switches.switchTJ && !switches.switchVM) return alert('请选择至少一个协议');
             
-            if (!domain || !uuid) {
-                alert('请先填写域名和UUID/Password');
-                return;
+            let url = \`\${location.origin}/\${uuid}/sub?domain=\${encodeURIComponent(domain)}&epd=\${switches.switchDomain?'yes':'no'}&epi=\${switches.switchIP?'yes':'no'}&egi=\${switches.switchGitHub?'yes':'no'}\`;
+            const gitUrl = document.getElementById('githubUrl').value.trim();
+            if(gitUrl) url += \`&piu=\${encodeURIComponent(gitUrl)}\`;
+            
+            if(switches.switchVL) url+='&ev=yes';
+            if(switches.switchTJ) url+='&et=yes';
+            if(switches.switchVM) url+='&mess=yes';
+            if(!document.getElementById('ipv4Enabled').checked) url+='&ipv4=no';
+            if(!document.getElementById('ipv6Enabled').checked) url+='&ipv6=no';
+            if(!document.getElementById('ispMobile').checked) url+='&ispMobile=no';
+            if(!document.getElementById('ispUnicom').checked) url+='&ispUnicom=no';
+            if(!document.getElementById('ispTelecom').checked) url+='&ispTelecom=no';
+            if(switches.switchTLS) url+='&dkby=yes';
+            if(switches.switchECH) {
+                url+='&ech=yes';
+                const d1=document.getElementById('customDNS').value, d2=document.getElementById('customECHDomain').value;
+                if(d1) url+=\`&customDNS=\${encodeURIComponent(d1)}\`;
+                if(d2) url+=\`&customECHDomain=\${encodeURIComponent(d2)}\`;
             }
+            const cp=document.getElementById('customPath').value;
+            if(cp && cp!=='/') url+=\`&path=\${encodeURIComponent(cp)}\`;
             
-            if (!switches.switchVL && !switches.switchTJ && !switches.switchVM) {
-                alert('请至少选择一个协议（VLESS、Trojan或VMess）');
-                return;
-            }
-            
-            const ipv4Enabled = document.getElementById('ipv4Enabled').checked;
-            const ipv6Enabled = document.getElementById('ipv6Enabled').checked;
-            const ispMobile = document.getElementById('ispMobile').checked;
-            const ispUnicom = document.getElementById('ispUnicom').checked;
-            const ispTelecom = document.getElementById('ispTelecom').checked;
-            
-            const githubUrl = document.getElementById('githubUrl').value.trim();
-            
-            const currentUrl = new URL(window.location.href);
-            const baseUrl = currentUrl.origin;
-            let subscriptionUrl = \`\${baseUrl}/\${uuid}/sub?domain=\${encodeURIComponent(domain)}&epd=\${switches.switchDomain ? 'yes' : 'no'}&epi=\${switches.switchIP ? 'yes' : 'no'}&egi=\${switches.switchGitHub ? 'yes' : 'no'}\`;
-            
-            if (githubUrl) {
-                subscriptionUrl += \`&piu=\${encodeURIComponent(githubUrl)}\`;
-            }
-            
-            if (switches.switchVL) subscriptionUrl += '&ev=yes';
-            if (switches.switchTJ) subscriptionUrl += '&et=yes';
-            if (switches.switchVM) subscriptionUrl += '&mess=yes';
-            
-            if (!ipv4Enabled) subscriptionUrl += '&ipv4=no';
-            if (!ipv6Enabled) subscriptionUrl += '&ipv6=no';
-            if (!ispMobile) subscriptionUrl += '&ispMobile=no';
-            if (!ispUnicom) subscriptionUrl += '&ispUnicom=no';
-            if (!ispTelecom) subscriptionUrl += '&ispTelecom=no';
-            
-            if (switches.switchTLS) subscriptionUrl += '&dkby=yes';
-            if (switches.switchECH) {
-                subscriptionUrl += '&ech=yes';
-                const dnsVal = document.getElementById('customDNS') && document.getElementById('customDNS').value.trim();
-                if (dnsVal) subscriptionUrl += \`&customDNS=\${encodeURIComponent(dnsVal)}\`;
-                const domainVal = document.getElementById('customECHDomain') && document.getElementById('customECHDomain').value.trim();
-                if (domainVal) subscriptionUrl += \`&customECHDomain=\${encodeURIComponent(domainVal)}\`;
-            }
-            
-            if (customPath && customPath !== '/') {
-                subscriptionUrl += \`&path=\${encodeURIComponent(customPath)}\`;
-            }
-            
-            let finalUrl = subscriptionUrl;
-            let schemeUrl = '';
-            let displayName = clientName || '';
-            
-            if (clientType === 'v2ray') {
-                finalUrl = subscriptionUrl;
-                const urlElement = document.getElementById('clientSubscriptionUrl');
-                urlElement.textContent = finalUrl;
-                urlElement.style.display = 'block';
-                
-                if (clientName === 'V2RAY') {
-                    navigator.clipboard.writeText(finalUrl).then(() => {
-                        alert(displayName + ' 订阅链接已复制');
-                    });
-                } else if (clientName === 'Shadowrocket') {
-                    schemeUrl = 'shadowrocket://add/' + encodeURIComponent(finalUrl);
-                    tryOpenApp(schemeUrl, () => {
-                        navigator.clipboard.writeText(finalUrl).then(() => {
-                            alert(displayName + ' 订阅链接已复制');
-                        });
-                    });
-                } else if (clientName === 'V2RAYNG') {
-                    schemeUrl = 'v2rayng://install?url=' + encodeURIComponent(finalUrl);
-                    tryOpenApp(schemeUrl, () => {
-                        navigator.clipboard.writeText(finalUrl).then(() => {
-                            alert(displayName + ' 订阅链接已复制');
-                        });
-                    });
-                } else if (clientName === 'NEKORAY') {
-                    schemeUrl = 'nekoray://install-config?url=' + encodeURIComponent(finalUrl);
-                    tryOpenApp(schemeUrl, () => {
-                        navigator.clipboard.writeText(finalUrl).then(() => {
-                            alert(displayName + ' 订阅链接已复制');
-                        });
-                    });
-                }
+            let finalUrl=url, schemeUrl='';
+            if(clientType==='v2ray') {
+                const el=document.getElementById('clientSubscriptionUrl'); el.textContent=url; el.style.display='block';
+                const schemes = {'Shadowrocket':'shadowrocket://add/','V2RAYNG':'v2rayng://install?url=','NEKORAY':'nekoray://install-config?url='};
+                if(schemes[clientName]) {
+                    tryOpenApp(schemes[clientName]+encodeURIComponent(url), () => navigator.clipboard.writeText(url).then(()=>alert(clientName+' 链接已复制')));
+                } else { navigator.clipboard.writeText(url).then(()=>alert(clientName+' 链接已复制')); }
             } else {
-                const encodedUrl = encodeURIComponent(subscriptionUrl);
-                finalUrl = SUB_CONVERTER_URL + '?target=' + clientType + '&url=' + encodedUrl + '&insert=false&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=false&fdn=false&new_name=true';
-                
-                const urlElement = document.getElementById('clientSubscriptionUrl');
-                urlElement.textContent = finalUrl;
-                urlElement.style.display = 'block';
-                
-                if (clientType === 'clash') {
-                    if (clientName === 'STASH') {
-                        schemeUrl = 'stash://install?url=' + encodeURIComponent(finalUrl);
-                        displayName = 'STASH';
-                    } else {
-                        schemeUrl = 'clash://install-config?url=' + encodeURIComponent(finalUrl);
-                        displayName = 'CLASH';
-                    }
-                } else if (clientType === 'surge') {
-                    schemeUrl = 'surge:///install-config?url=' + encodeURIComponent(finalUrl);
-                    displayName = 'SURGE';
-                } else if (clientType === 'sing-box') {
-                    schemeUrl = 'sing-box://install-config?url=' + encodeURIComponent(finalUrl);
-                    displayName = 'SING-BOX';
-                } else if (clientType === 'loon') {
-                    schemeUrl = 'loon://install?url=' + encodeURIComponent(finalUrl);
-                    displayName = 'LOON';
-                } else if (clientType === 'quanx') {
-                    schemeUrl = 'quantumult-x://install-config?url=' + encodeURIComponent(finalUrl);
-                    displayName = 'QUANTUMULT X';
-                }
-                
-                if (schemeUrl) {
-                    tryOpenApp(schemeUrl, () => {
-                        navigator.clipboard.writeText(finalUrl).then(() => {
-                            alert(displayName + ' 订阅链接已复制');
-                        });
-                    });
-                } else {
-                    navigator.clipboard.writeText(finalUrl).then(() => {
-                        alert(displayName + ' 订阅链接已复制');
-                    });
-                }
+                finalUrl = SUB_CONVERTER_URL + '?target=' + clientType + '&url=' + encodeURIComponent(url) + '&insert=false&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=false&fdn=false&new_name=true';
+                document.getElementById('clientSubscriptionUrl').textContent = finalUrl;
+                document.getElementById('clientSubscriptionUrl').style.display='block';
+                const schemes = {'STASH':'stash://install?url=','CLASH':'clash://install-config?url=','SURGE':'surge:///install-config?url=','SING-BOX':'sing-box://install-config?url=','LOON':'loon://install?url=','QUANTUMULT X':'quantumult-x://install-config?url='};
+                if(schemes[clientName]) tryOpenApp(schemes[clientName]+encodeURIComponent(finalUrl), () => navigator.clipboard.writeText(finalUrl).then(()=>alert(clientName+' 链接已复制')));
+                else navigator.clipboard.writeText(finalUrl).then(()=>alert(clientName+' 链接已复制'));
             }
         }
     </script>
@@ -1195,24 +540,17 @@ export default {
         const path = url.pathname;
         
         if (path === '/' || path === '') {
-            const scuValue = env?.scu || DEFAULT_CONFIG.scu;
-            return new Response(generateHomePage(scuValue), {
-                headers: { 'Content-Type': 'text/html; charset=utf-8' }
-            });
+            return new Response(generateHomePage(env?.scu || DEFAULT_CONFIG.scu), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
         
         if (path === '/test-optimize-api') {
-            if (request.method === 'OPTIONS') {
-                return new Response(null, { headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' } });
-            }
+            if (request.method === 'OPTIONS') return new Response(null, { headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' } });
             const apiUrl = url.searchParams.get('url');
             if (!apiUrl) return new Response(JSON.stringify({ success: false, error: '缺少url参数' }), { status: 400 });
             try {
                 const results = await fetchOptimizedAPI([apiUrl], url.searchParams.get('port') || '443', parseInt(url.searchParams.get('timeout') || '3000'));
                 return new Response(JSON.stringify({ success: true, results, total: results.length }), { headers: { 'Content-Type': 'application/json; charset=utf-8' } });
-            } catch (error) {
-                return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500 });
-            }
+            } catch (error) { return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500 }); }
         }
         
         const pathMatch = path.match(/^\/([^\/]+)\/sub$/);
@@ -1224,21 +562,17 @@ export default {
                 target: url.searchParams.get('target') || 'base64',
                 customPath: url.searchParams.get('path') || '/',
                 piu: url.searchParams.get('piu') || DEFAULT_CONFIG.defaultIPURL,
-                
                 epdEnabled: url.searchParams.get('epd') === 'yes', 
                 epiEnabled: url.searchParams.get('epi') === 'yes', 
                 egiEnabled: url.searchParams.get('egi') !== 'no',
-                
                 evEnabled: url.searchParams.get('ev') === 'yes' || (url.searchParams.get('ev') === null && DEFAULT_CONFIG.ev),
                 etEnabled: url.searchParams.get('et') === 'yes',
                 vmEnabled: url.searchParams.get('mess') === 'yes',
-                
                 ipv4Enabled: url.searchParams.get('ipv4') !== 'no',
                 ipv6Enabled: url.searchParams.get('ipv6') !== 'no',
                 ispMobile: url.searchParams.get('ispMobile') !== 'no',
                 ispUnicom: url.searchParams.get('ispUnicom') !== 'no',
                 ispTelecom: url.searchParams.get('ispTelecom') !== 'no',
-                
                 disableNonTLS: url.searchParams.get('dkby') === 'yes',
                 echConfig: null
             };
@@ -1246,12 +580,9 @@ export default {
             if (!url.searchParams.get('domain')) return new Response('缺少域名参数', { status: 400 });
 
             const echParam = url.searchParams.get('ech');
-            const echEnabled = echParam === 'yes' || (echParam === null && DEFAULT_CONFIG.enableECH);
-            if (echEnabled) {
+            if (echParam === 'yes' || (echParam === null && DEFAULT_CONFIG.enableECH)) {
                 reqConfig.disableNonTLS = true;
-                const customDNS = url.searchParams.get('customDNS') || DEFAULT_CONFIG.customDNS;
-                const customECHDomain = url.searchParams.get('customECHDomain') || DEFAULT_CONFIG.customECHDomain;
-                reqConfig.echConfig = `${customECHDomain}+${customDNS}`;
+                reqConfig.echConfig = `${url.searchParams.get('customECHDomain') || DEFAULT_CONFIG.customECHDomain}+${url.searchParams.get('customDNS') || DEFAULT_CONFIG.customDNS}`;
             }
 
             return await handleSubscriptionRequest(request, reqConfig);
