@@ -144,7 +144,7 @@ async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
     return Array.from(results);
 }
 
-//完美支持 IPv4 和带中括号的 IPv6 解析
+// 完美支持 IPv4 和带中括号的 IPv6 解析
 async function fetchGitHubIPs(piu) {
     const url = piu || DEFAULT_CONFIG.defaultIPURL;
     try {
@@ -172,7 +172,7 @@ async function fetchGitHubIPs(piu) {
     }
 }
 
-// ================= 核心节点生成 (极简命名版 + 网速并发注入) =================
+// ================= 核心节点生成 (极简命名版) =================
 function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echConfig, protocols) {
     const CF_HTTP_PORTS = [80, 8080, 8880, 2052, 2082, 2086, 2095];
     const CF_HTTPS_PORTS = [443, 2053, 2083, 2087, 2096, 8443];
@@ -365,11 +365,11 @@ function generateClashConfig(links) {
         const echParam = link.match(/[?&]ech=([^&#]+)/)?.[1];
         
         if(isVless || isTrojan) {
-             yaml += `  - name: ${name}\n    type: ${isVless ? 'vless' : 'trojan'}\n    server: ${server}\n    port: ${port}\n    ${isVless ? 'uuid' : 'password'}: ${passOrUuid}\n    tls: ${tls}\n    udp: true\n    network: ws\n    ws-opts:\n      path: ${path}\n      max-early-data: 2048\n      headers:\n        Host: ${host}\n`;
-             if (sni) yaml += `    servername: ${sni}\n`;
-             // 强制客户端使用 h2 并发
-             if (tls) yaml += `    client-fingerprint: chrome\n    alpn:\n      - h2\n      - http/1.1\n`;
-             if (echParam) yaml += `    ech-opts:\n      enable: true\n      query-server-name: ${decodeURIComponent(echParam).split('+')[0]}\n`;
+            yaml += `  - name: ${name}\n    type: ${isVless ? 'vless' : 'trojan'}\n    server: ${server}\n    port: ${port}\n    ${isVless ? 'uuid' : 'password'}: ${passOrUuid}\n    tls: ${tls}\n    udp: true\n    network: ws\n    ws-opts:\n      path: ${path}\n      max-early-data: 2048\n      headers:\n        Host: ${host}\n`;
+            if (sni) yaml += `    servername: ${sni}\n`;
+            // 强制客户端使用 h2 并发
+            if (tls) yaml += `    client-fingerprint: chrome\n    alpn:\n      - h2\n      - http/1.1\n`;
+            if (echParam) yaml += `    ech-opts:\n      enable: true\n      query-server-name: ${decodeURIComponent(echParam).split('+')[0]}\n`;
         }
     });
     yaml += `\nproxy-groups:\n  - name: PROXY\n    type: select\n    proxies: [${proxyNames.map(n => `'${n}'`).join(', ')}]\nrules:\n  - DOMAIN-SUFFIX,local,DIRECT\n  - IP-CIDR,127.0.0.0/8,DIRECT\n  - GEOIP,CN,DIRECT\n  - MATCH,PROXY\n`;
