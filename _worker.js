@@ -183,8 +183,8 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
         const nodeNameBase = item.colo && item.colo.trim() ? `${baseName}-${item.colo.trim()}` : baseName;
         const safeIP = item.ip.includes(':') ? `[${item.ip}]` : item.ip;
         
-// 无论原始数据提供什么端口，只要是 TLS 模式就强制锁定 443
-const portsToGenerate = disableNonTLS ? [443] : (item.port ? [item.port] : [443, 80]);
+// 🚀 终极修正：如果原数据自带端口（如 8443），必须保留！否则才回退到默认 443
+const portsToGenerate = item.port ? [item.port] : (disableNonTLS ? [443] : [443, 80]);
 
         for (const port of portsToGenerate) {
             const tls = port !== 80 && port !== 8080;
