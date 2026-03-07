@@ -1,5 +1,5 @@
-// Cloudflare Worker - 极限性能版优选工具 (纯净私库极简命名版 + KV缓存架构 + 完整UI)
-// 终极优化：分块文本编码、去 URLSearchParams、KV 全局缓存、极简 TLS 判断
+// Cloudflare Worker - 极限性能版优选工具 (v4.1 尊享版：三层权重评分 + KV/Edge双缓存 + 完整UI + 全局去重)
+// 终极架构：CloudflareST -> GitHub -> Worker KV -> Edge CDN -> 手机订阅
 
 const DEFAULT_CONFIG = {
     epd: false, epi: false, egi: true,
@@ -37,6 +37,12 @@ async function fetchWithTimeout(url, timeoutMs = 3000) {
     } finally {
         clearTimeout(timer);
     }
+}
+
+// v4.1 新增：SHA-256 哈希处理，防止 KV Key 过长
+async function hashKey(str) {
+    const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // ================= 全局 KV 缓存架构 =================
@@ -136,7 +142,8 @@ async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
 
 async function fetchGitHubIPs(env, ctx, piu) {
     const url = piu || DEFAULT_CONFIG.defaultIPURL;
-    return getCachedData(env, ctx, `github_${url}`, async () => {
+    const hashedUrl = await hashKey(url); // v4.1: 对 URL 进行哈希处理防止溢出
+    return getCachedData(env, ctx, `github_${hashedUrl}`, async () => {
         try {
             const response = await fetchWithTimeout(url);
             if (!response.ok) return [];
@@ -216,36 +223,69 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
         vmEnabled: config.vmEnabled
     };
 
-    const addNodesFromList = (list) => {
-        finalLinks.push(...generateNodesFromList(list, config.user, config.nodeDomain, config.disableNonTLS, config.customPath, config.echConfig, protocols));
-    };
+    let allRawNodes = [];
 
+    // 1. 收集所有数据源
     if (config.epdEnabled) {
-        addNodesFromList(directDomains.map(d => ({ ip: d.domain, isp: d.name || d.domain })));
+        allRawNodes.push(...directDomains.map(d => ({ ip: d.domain, port: 443, name: d.name || d.domain })));
     }
 
     if (config.epiEnabled) {
         const dynamicIPList = await fetchDynamicIPs(env, ctx, config.ipv4Enabled, config.ipv6Enabled, config.ispMobile, config.ispUnicom, config.ispTelecom);
-        if (dynamicIPList.length > 0) addNodesFromList(dynamicIPList);
+        if (dynamicIPList.length > 0) allRawNodes.push(...dynamicIPList);
     }
 
     if (config.egiEnabled) {
         try {
             if (config.piu && config.piu.toLowerCase().startsWith('https://') && !config.piu.includes('\n')) {
                 const parsedIps = parseRawIps(await fetchOptimizedAPI([config.piu]));
-                if (parsedIps.length > 0) addNodesFromList(parsedIps);
+                if (parsedIps.length > 0) allRawNodes.push(...parsedIps);
             } else if (config.piu && config.piu.includes('\n')) {
                 const fullList = parseToArray(config.piu);
                 const apiUrls = fullList.filter(e => e.toLowerCase().startsWith('https://'));
                 const rawIps = fullList.filter(e => !e.toLowerCase().includes('://'));
                 if (apiUrls.length > 0) rawIps.push(...(await fetchOptimizedAPI(apiUrls)));
                 const parsedIps = parseRawIps(rawIps);
-                if (parsedIps.length > 0) addNodesFromList(parsedIps);
+                if (parsedIps.length > 0) allRawNodes.push(...parsedIps);
             } else {
                 const newIPList = await fetchGitHubIPs(env, ctx, config.piu);
-                if (newIPList.length > 0) addNodesFromList(newIPList);
+                if (newIPList.length > 0) allRawNodes.push(...newIPList);
             }
         } catch (error) {}
+    }
+
+    // v4.1 新增：2. 全局 Map 精准去重 (IP:Port 为唯一键)
+    const uniqueNodesMap = new Map();
+    for (const node of allRawNodes) {
+        if (node && node.ip) {
+            uniqueNodesMap.set(`${node.ip}:${node.port || 443}`, node);
+        }
+    }
+    let deduplicatedList = Array.from(uniqueNodesMap.values());
+
+    // v4.1 升级：3. 终极三层权重打分 + 扩容版词库
+    const godPrefixes = ['43.161.', '43.160.', '43.152.', '8.210.', '47.74.', '47.76.', '47.79.', '129.226.', '150.109.'];
+    const hkKeywords = ['香港', 'HK', 'HKG', 'HKT', 'HKBN', 'HONGKONG'];
+
+    const sortedList = deduplicatedList.map(item => {
+        const isGod = godPrefixes.some(prefix => item.ip.startsWith(prefix));
+        const nameStr = item.name || item.ip || '';
+        const isHK = hkKeywords.some(k => nameStr.toUpperCase().includes(k));
+        
+        let score = 0;
+        if (isGod) score += 100;
+        if (isHK) score += 50;
+
+        let finalName = nameStr;
+        if (isGod) finalName = `🚀神级-${nameStr}`;
+        else if (isHK && !isGod) finalName = `🇭🇰优选-${nameStr}`;
+
+        return { ...item, _score: score, name: finalName };
+    }).sort((a, b) => b._score - a._score); // 降序排列
+
+    // 4. 生成节点列表
+    if (sortedList.length > 0) {
+        finalLinks.push(...generateNodesFromList(sortedList, config.user, config.nodeDomain, config.disableNonTLS, config.customPath, config.echConfig, protocols));
     }
 
     if (finalLinks.length === 0) {
@@ -274,7 +314,8 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
     return new Response(subscriptionContent, {
         headers: { 
             'Content-Type': contentType,
-            'Cache-Control': 'public, max-age=180, s-maxage=180', // CDN 边缘节点缓存
+            // v4.1 升级：对齐 KV 缓存周期，提升到 600 秒
+            'Cache-Control': 'public, max-age=600, s-maxage=600', 
             'Access-Control-Allow-Origin': '*',
             'Content-Disposition': 'attachment; filename="sub.txt"',
         },
@@ -703,7 +744,7 @@ export default {
             // 获取数据并生成节点 (内嵌了 KV 缓存机制，命中则不消耗外部 fetch 网络时间)
             const response = await handleSubscriptionRequest(request, env, ctx, reqConfig);
             
-            // 2. 异步回写 Edge Cache
+            // 2. 异步回写 Edge Cache (延长至 600 秒)
             if (response.status === 200) {
                 ctx.waitUntil(cache.put(cacheKey, response.clone()));
             }
