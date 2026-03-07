@@ -84,9 +84,13 @@ async function fetchDynamicIPs(env, ctx, ipv4Enabled, ipv6Enabled, ispMobile, is
         const [ipv4List, ipv6List] = await Promise.all(fetchPromises);
         let results = [...ipv4List, ...ipv6List];
         
-        if (results.length > 0) {
+if (results.length > 0) {
             results = results.filter(item => {
                 const name = item.name || '';
+                
+                // 🚀 新增：精准狙击，遇到“官方优选IPv6”直接扔掉
+                if (name.includes('官方优选IPv6')) return false;
+
                 if (name.includes('移动') && !ispMobile) return false;
                 if (name.includes('联通') && !ispUnicom) return false;
                 if (name.includes('电信') && !ispTelecom) return false;
