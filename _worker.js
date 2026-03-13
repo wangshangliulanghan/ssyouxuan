@@ -173,7 +173,7 @@ function parseRawIps(rawIps) {
     return results;
 }
 
-// ================= 核心节点生成 (已修改为 XHTTP) =================
+// ================= 核心节点生成 =================
 function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echConfig, protocols) {
     const links = [];
     const wsPath = customPath || '/';
@@ -190,13 +190,10 @@ const portsToGenerate = item.port ? [item.port] : (disableNonTLS ? [443] : [443,
             const tls = port !== 80 && port !== 8080;
             if (disableNonTLS && !tls) continue;
 
-            // 🚀 这里由原来的 type=ws 改为了 type=xhttp，并新增了 mode=auto
-            let params = `type=xhttp&host=${workerDomain}&path=${wsPath}&security=${tls ? 'tls' : 'none'}&mode=auto`;
+            let params = `type=ws&host=${workerDomain}&path=${wsPath}&security=${tls ? 'tls' : 'none'}`;
             if (tls) {
                 params += `&sni=${workerDomain}&fp=chrome`;
-                // 强制开启更高级的 ALPN 以匹配 XHTTP
-                params += `&alpn=h3,h2,http/1.1`; 
-                if (echConfig) params += `&ech=${echConfig}`;
+                if (echConfig) params += `&alpn=h3,h2,http/1.1&ech=${echConfig}`;
             }
 
             if (protocols.evEnabled) {
@@ -208,8 +205,7 @@ const portsToGenerate = item.port ? [item.port] : (disableNonTLS ? [443] : [443,
             if (protocols.vmEnabled) {
                 const vmessConfig = {
                     v: "2", ps: nodeNameBase, add: safeIP, port: port.toString(), id: user, aid: "0", scy: "auto",
-                    // 🚀 这里也将 VMess 的 net 改为了 xhttp
-                    net: "xhttp", type: "none", host: workerDomain, path: wsPath,
+                    net: "ws", type: "none", host: workerDomain, path: wsPath,
                     tls: tls ? "tls" : "none"
                 };
                 if (tls) {
@@ -348,8 +344,7 @@ function generateClashConfig(links) {
         const sni = link.match(/sni=([^&#]+)/)?.[1] || '';
         const echParam = link.match(/[?&]ech=([^&#]+)/)?.[1];
         
-        // 注意：如果你要在 Clash 中使用 XHTTP，Clash Meta 内核可能需要特殊配置，这里仍保留网络类型标注
-        yaml += `  - name: ${name}\n    type: ${isVless ? 'vless' : 'trojan'}\n    server: ${server}\n    port: ${port}\n    ${isVless ? 'uuid' : 'password'}: ${passOrUuid}\n    tls: ${tls}\n    network: xhttp\n    xhttp-opts:\n      path: ${path}\n      headers:\n        Host: ${host}\n`;
+        yaml += `  - name: ${name}\n    type: ${isVless ? 'vless' : 'trojan'}\n    server: ${server}\n    port: ${port}\n    ${isVless ? 'uuid' : 'password'}: ${passOrUuid}\n    tls: ${tls}\n    network: ws\n    ws-opts:\n      path: ${path}\n      headers:\n        Host: ${host}\n`;
         if (sni) yaml += `    servername: ${sni}\n`;
         if (echParam) yaml += `    ech-opts:\n      enable: true\n      query-server-name: ${decodeURIComponent(echParam).split('+')[0]}\n`;
     });
@@ -462,9 +457,9 @@ function generateHomePage(scuValue) {
             </div>
             
             <div class="form-group">
-                <label>WebSocket/XHTTP路径（可选）</label>
+                <label>WebSocket路径（可选）</label>
                 <input type="text" id="customPath" placeholder="留空则使用默认路径 /" value="/">
-                <small style="display: block; margin-top: 6px; color: #86868b; font-size: 13px;">自定义代理路径，例如：/v2ray 或 /</small>
+                <small style="display: block; margin-top: 6px; color: #86868b; font-size: 13px;">自定义WebSocket路径，例如：/v2ray 或 /</small>
             </div>
             
             <div class="list-item" onclick="toggleSwitch('switchDomain')">
@@ -591,7 +586,7 @@ function generateHomePage(scuValue) {
         </div>
         
         <div class="footer">
-            <p>极简命名版工具 • 纯净私有定制 (XHTTP 版)</p>
+            <p>极简命名版工具 • 纯净私有定制</p>
         </div>
     </div>
     
