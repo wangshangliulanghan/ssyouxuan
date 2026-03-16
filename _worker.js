@@ -269,7 +269,7 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
     let deduplicatedList = Array.from(uniqueNodesMap.values());
 
     // v4.1 升级：3. 终极三层权重打分 + 扩容版词库
-    const godPrefixes = ['43.161.', '43.160.', '43.152.', '8.210.', '47.74.', '47.76.', '47.79.', '129.226.', '150.109.'];
+    const godPrefixes = ['43.161.', '43.160.', '43.152.', '8.210.', '47.74.', '47.76.', '47.79.', '129.226.', '150.109.', '54.251.'];
     const hkKeywords = ['香港', 'HK', 'HKG', 'HKT', 'HKBN', 'HONGKONG'];
 
     const sortedList = deduplicatedList.map(item => {
