@@ -8,7 +8,7 @@ const DEFAULT_CONFIG = {
     enableECH: false,
     customDNS: 'https://dns.joeyblog.eu.org/joeyblog',
     customECHDomain: 'cloudflare-ech.com',
-    defaultIPURL: 'https://gist.githubusercontent.com/shiyikeji/3ce1217fe686b8d8525719086bae5312/raw/6eb7be31a82ed11ae04ffc99266aee500362b43a/my_best_ips.txt'
+    defaultIPURL: 'https://gist.githubusercontent.com/shiyikeji/3ce1217fe686b8d8525719086bae5312/raw/my_best_ips.txt'
 };
 
 const directDomains = []; 
