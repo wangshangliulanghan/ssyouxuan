@@ -1,4 +1,4 @@
-// Cloudflare Worker - 极限性能版优选工具 (v4.1 尊享版：三层权重评分 + KV/Edge双缓存 + 完整UI + 全局去重)
+// Cloudflare Worker - 极限性能版优选工具 (v4.2 尊享版：三层权重评分 + KV/Edge双缓存 + 完整UI + 全局去重 + XHTTP支持)
 // 终极架构：CloudflareST -> GitHub -> Worker KV -> Edge CDN -> 手机订阅
 
 const DEFAULT_CONFIG = {
@@ -39,7 +39,6 @@ async function fetchWithTimeout(url, timeoutMs = 3000) {
     }
 }
 
-// v4.1 新增：SHA-256 哈希处理，防止 KV Key 过长
 async function hashKey(str) {
     const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
     return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -87,10 +86,7 @@ async function fetchDynamicIPs(env, ctx, ipv4Enabled, ipv6Enabled, ispMobile, is
 if (results.length > 0) {
             results = results.filter(item => {
                 const name = item.name || '';
-                
-                // 🚀 新增：精准狙击，遇到“官方优选IPv6”直接扔掉
                 if (name.includes('官方优选IPv6')) return false;
-
                 if (name.includes('移动') && !ispMobile) return false;
                 if (name.includes('联通') && !ispUnicom) return false;
                 if (name.includes('电信') && !ispTelecom) return false;
@@ -146,7 +142,7 @@ async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
 
 async function fetchGitHubIPs(env, ctx, piu) {
     const url = piu || DEFAULT_CONFIG.defaultIPURL;
-    const hashedUrl = await hashKey(url); // v4.1: 对 URL 进行哈希处理防止溢出
+    const hashedUrl = await hashKey(url);
     return getCachedData(env, ctx, `github_${hashedUrl}`, async () => {
         try {
             const response = await fetchWithTimeout(url);
@@ -174,23 +170,24 @@ function parseRawIps(rawIps) {
 }
 
 // ================= 核心节点生成 =================
-function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echConfig, protocols) {
+// v4.2 修改点：增加 network 传输协议参数支持
+function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echConfig, protocols, network) {
     const links = [];
-    const wsPath = customPath || '/';
+    const reqPath = customPath || '/';
 
     for (const item of list) {
         const baseName = item.isp ? item.isp.replace(/\s/g, '_') : (item.name || item.domain || item.ip);
         const nodeNameBase = item.colo && item.colo.trim() ? `${baseName}-${item.colo.trim()}` : baseName;
         const safeIP = item.ip.includes(':') ? `[${item.ip}]` : item.ip;
         
-// 🚀 终极修正：如果原数据自带端口（如 8443），必须保留！否则才回退到默认 443
-const portsToGenerate = item.port ? [item.port] : (disableNonTLS ? [443] : [443, 80]);
+        const portsToGenerate = item.port ? [item.port] : (disableNonTLS ? [443] : [443, 80]);
 
         for (const port of portsToGenerate) {
             const tls = port !== 80 && port !== 8080;
             if (disableNonTLS && !tls) continue;
 
-            let params = `type=ws&host=${workerDomain}&path=${wsPath}&security=${tls ? 'tls' : 'none'}`;
+            // 动态注入 network (ws 或 xhttp)
+            let params = `type=${network}&host=${workerDomain}&path=${reqPath}&security=${tls ? 'tls' : 'none'}`;
             if (tls) {
                 params += `&sni=${workerDomain}&fp=chrome`;
                 if (echConfig) params += `&alpn=h3,h2,http/1.1&ech=${echConfig}`;
@@ -205,7 +202,7 @@ const portsToGenerate = item.port ? [item.port] : (disableNonTLS ? [443] : [443,
             if (protocols.vmEnabled) {
                 const vmessConfig = {
                     v: "2", ps: nodeNameBase, add: safeIP, port: port.toString(), id: user, aid: "0", scy: "auto",
-                    net: "ws", type: "none", host: workerDomain, path: wsPath,
+                    net: network, type: "none", host: workerDomain, path: reqPath, // 动态网路层
                     tls: tls ? "tls" : "none"
                 };
                 if (tls) {
@@ -230,7 +227,6 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
 
     let allRawNodes = [];
 
-    // 1. 收集所有数据源
     if (config.epdEnabled) {
         allRawNodes.push(...directDomains.map(d => ({ ip: d.domain, port: 443, name: d.name || d.domain })));
     }
@@ -259,7 +255,6 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
         } catch (error) {}
     }
 
-    // v4.1 新增：2. 全局 Map 精准去重 (IP:Port 为唯一键)
     const uniqueNodesMap = new Map();
     for (const node of allRawNodes) {
         if (node && node.ip) {
@@ -268,7 +263,6 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
     }
     let deduplicatedList = Array.from(uniqueNodesMap.values());
 
-    // v4.1 升级：3. 终极三层权重打分 + 扩容版词库
     const godPrefixes = ['43.161.', '43.160.', '43.152.', '8.210.', '47.74.', '47.76.', '47.79.', '129.226.', '150.109.', '54.251.', '54.169.', '18.136.', '13.212.', '52.220.', '34.87.', '34.124.', '35.185.', '35.197.', '20.198.', '20.205.', '40.79.', '52.187.', '128.199.', '139.59.', '134.209.', '45.32.', '149.28.', '139.180.'];
     const hkKeywords = ['香港', 'HK', 'HKG', 'HKT', 'HKBN', 'HONGKONG'];
 
@@ -286,11 +280,11 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
         else if (isHK && !isGod) finalName = `🇭🇰优选-${nameStr}`;
 
         return { ...item, _score: score, name: finalName };
-    }).sort((a, b) => b._score - a._score); // 降序排列
+    }).sort((a, b) => b._score - a._score); 
 
-    // 4. 生成节点列表
+    // v4.2 传入 config.network
     if (sortedList.length > 0) {
-        finalLinks.push(...generateNodesFromList(sortedList, config.user, config.nodeDomain, config.disableNonTLS, config.customPath, config.echConfig, protocols));
+        finalLinks.push(...generateNodesFromList(sortedList, config.user, config.nodeDomain, config.disableNonTLS, config.customPath, config.echConfig, protocols, config.network));
     }
 
     if (finalLinks.length === 0) {
@@ -319,7 +313,6 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
     return new Response(subscriptionContent, {
         headers: { 
             'Content-Type': contentType,
-            // v4.1 升级：对齐 KV 缓存周期，提升到 600 秒
             'Cache-Control': 'public, max-age=600, s-maxage=600', 
             'Access-Control-Allow-Origin': '*',
             'Content-Disposition': 'attachment; filename="sub.txt"',
@@ -344,7 +337,18 @@ function generateClashConfig(links) {
         const sni = link.match(/sni=([^&#]+)/)?.[1] || '';
         const echParam = link.match(/[?&]ech=([^&#]+)/)?.[1];
         
-        yaml += `  - name: ${name}\n    type: ${isVless ? 'vless' : 'trojan'}\n    server: ${server}\n    port: ${port}\n    ${isVless ? 'uuid' : 'password'}: ${passOrUuid}\n    tls: ${tls}\n    network: ws\n    ws-opts:\n      path: ${path}\n      headers:\n        Host: ${host}\n`;
+        // v4.2: 动态读取 type，判定为 ws 还是 xhttp
+        const network = link.match(/[?&]type=([^&#]+)/)?.[1] || 'ws';
+        
+        yaml += `  - name: ${name}\n    type: ${isVless ? 'vless' : 'trojan'}\n    server: ${server}\n    port: ${port}\n    ${isVless ? 'uuid' : 'password'}: ${passOrUuid}\n    tls: ${tls}\n    network: ${network}\n`;
+        
+        // v4.2: 根据协议生成 ws-opts 或 xhttp-opts
+        if (network === 'ws') {
+            yaml += `    ws-opts:\n      path: ${path}\n      headers:\n        Host: ${host}\n`;
+        } else if (network === 'xhttp') {
+            yaml += `    xhttp-opts:\n      path: ${path}\n      headers:\n        Host: ${host}\n`;
+        }
+
         if (sni) yaml += `    servername: ${sni}\n`;
         if (echParam) yaml += `    ech-opts:\n      enable: true\n      query-server-name: ${decodeURIComponent(echParam).split('+')[0]}\n`;
     });
@@ -356,7 +360,15 @@ function generateSurgeConfig(links) {
     let config = '[Proxy]\n';
     links.forEach((link, i) => {
         const name = decodeURIComponent(link.split('#')[1] || `节点${i+1}`);
-        config += `${name} = vless, ${link.match(/@([^:]+):(\d+)/)?.[1] || ''}, ${link.match(/@[^:]+:(\d+)/)?.[1] || '443'}, username=${link.match(/vless:\/\/([^@]+)@/)?.[1] || ''}, tls=${link.includes('security=tls')}, ws=true, ws-path=${link.match(/path=([^&#]+)/)?.[1] || '/'}, ws-headers=Host:${link.match(/host=([^&#]+)/)?.[1] || ''}\n`;
+        const network = link.match(/[?&]type=([^&#]+)/)?.[1] || 'ws';
+        
+        // 如果是 WS 才生成 WS 特有配置
+        let netOptions = '';
+        if (network === 'ws') {
+            netOptions = `, ws=true, ws-path=${link.match(/path=([^&#]+)/)?.[1] || '/'}, ws-headers=Host:${link.match(/host=([^&#]+)/)?.[1] || ''}`;
+        }
+        
+        config += `${name} = vless, ${link.match(/@([^:]+):(\d+)/)?.[1] || ''}, ${link.match(/@[^:]+:(\d+)/)?.[1] || '443'}, username=${link.match(/vless:\/\/([^@]+)@/)?.[1] || ''}, tls=${link.includes('security=tls')}${netOptions}\n`;
     });
     config += '\n[Proxy Group]\nPROXY = select, ' + links.map((_, i) => decodeURIComponent(links[i].split('#')[1] || `节点${i + 1}`)).join(', ') + '\n';
     return config;
@@ -372,7 +384,7 @@ function generateHomePage(scuValue) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>服务器优选工具</title>
+    <title>服务器优选工具 v4.2</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(180deg, #f5f5f7 0%, #ffffff 50%, #fafafa 100%); color: #1d1d1f; min-height: 100vh; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); overflow-x: hidden; }
@@ -442,7 +454,7 @@ function generateHomePage(scuValue) {
     <div class="container">
         <div class="header">
             <h1>服务器优选工具</h1>
-            <p>智能优选 • 极简命名终极版</p>
+            <p>智能优选 • 支持 XHTTP 终极版</p>
         </div>
         
         <div class="card">
@@ -457,9 +469,9 @@ function generateHomePage(scuValue) {
             </div>
             
             <div class="form-group">
-                <label>WebSocket路径（可选）</label>
+                <label>请求路径（WS / XHTTP）可选</label>
                 <input type="text" id="customPath" placeholder="留空则使用默认路径 /" value="/">
-                <small style="display: block; margin-top: 6px; color: #86868b; font-size: 13px;">自定义WebSocket路径，例如：/v2ray 或 /</small>
+                <small style="display: block; margin-top: 6px; color: #86868b; font-size: 13px;">自定义传输路径，例如：/v2ray 或 /</small>
             </div>
             
             <div class="list-item" onclick="toggleSwitch('switchDomain')">
@@ -511,7 +523,7 @@ function generateHomePage(scuValue) {
                     </div>
                 </div>
             </div>
-            
+
             <div class="form-group" style="margin-top: 24px;">
                 <label>客户端选择</label>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 8px;">
@@ -561,6 +573,14 @@ function generateHomePage(scuValue) {
                 </div>
             </div>
             
+            <div class="list-item" onclick="toggleSwitch('switchXHTTP')" style="margin-top: 8px;">
+                <div>
+                    <div class="list-item-label">启用 XHTTP 协议</div>
+                    <div class="list-item-description">替代 WebSocket (需客户端如 Clash Meta 支持)</div>
+                </div>
+                <div class="switch" id="switchXHTTP"></div>
+            </div>
+
             <div class="list-item" onclick="toggleSwitch('switchTLS')" style="margin-top: 8px;">
                 <div>
                     <div class="list-item-label">仅TLS节点</div>
@@ -593,7 +613,7 @@ function generateHomePage(scuValue) {
     <script>
         let switches = {
             switchDomain: false, switchIP: false, switchGitHub: true, switchVL: true,
-            switchTJ: false, switchVM: false, switchTLS: false, switchECH: false
+            switchTJ: false, switchVM: false, switchTLS: false, switchECH: false, switchXHTTP: false
         };
         
         function toggleSwitch(id) {
@@ -667,6 +687,8 @@ function generateHomePage(scuValue) {
             if (!ispUnicom) subUrl += '&ispUnicom=no';
             if (!ispTelecom) subUrl += '&ispTelecom=no';
             if (switches.switchTLS) subUrl += '&dkby=yes';
+            // 注入 XHTTP 传参
+            if (switches.switchXHTTP) subUrl += '&net=xhttp';
             
             if (switches.switchECH) {
                 subUrl += '&ech=yes';
@@ -726,7 +748,6 @@ export default {
             const cache = caches.default;
             const cacheKey = new Request(url.toString(), request);
             
-            // 1. Edge Cache 拦截 (命中直接返回，CPU占用接近0ms)
             const cachedResponse = await cache.match(cacheKey);
             if (cachedResponse) return cachedResponse;
 
@@ -735,7 +756,10 @@ export default {
                 epdEnabled: url.searchParams.get('epd') === 'yes', epiEnabled: url.searchParams.get('epi') === 'yes', egiEnabled: url.searchParams.get('egi') !== 'no',
                 evEnabled: url.searchParams.get('ev') === 'yes' || (url.searchParams.get('ev') === null && DEFAULT_CONFIG.ev), etEnabled: url.searchParams.get('et') === 'yes', vmEnabled: url.searchParams.get('mess') === 'yes',
                 ipv4Enabled: url.searchParams.get('ipv4') !== 'no', ipv6Enabled: url.searchParams.get('ipv6') !== 'no', ispMobile: url.searchParams.get('ispMobile') !== 'no', ispUnicom: url.searchParams.get('ispUnicom') !== 'no', ispTelecom: url.searchParams.get('ispTelecom') !== 'no',
-                disableNonTLS: url.searchParams.get('dkby') === 'yes', echConfig: null
+                disableNonTLS: url.searchParams.get('dkby') === 'yes', 
+                // v4.2 拦截 XHTTP 标识
+                network: url.searchParams.get('net') === 'xhttp' ? 'xhttp' : 'ws',
+                echConfig: null
             };
 
             if (!url.searchParams.get('domain')) return new Response('缺少域名参数', { status: 400 });
@@ -746,10 +770,8 @@ export default {
                 reqConfig.echConfig = `${url.searchParams.get('customECHDomain') || DEFAULT_CONFIG.customECHDomain}+${url.searchParams.get('customDNS') || DEFAULT_CONFIG.customDNS}`;
             }
 
-            // 获取数据并生成节点 (内嵌了 KV 缓存机制，命中则不消耗外部 fetch 网络时间)
             const response = await handleSubscriptionRequest(request, env, ctx, reqConfig);
             
-            // 2. 异步回写 Edge Cache (延长至 600 秒)
             if (response.status === 200) {
                 ctx.waitUntil(cache.put(cacheKey, response.clone()));
             }
