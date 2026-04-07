@@ -518,7 +518,7 @@ function generateHomePage(scuValue) {
                     <button type="button" class="client-btn" onclick="generateClientLink('clash', 'CLASH')">CLASH</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('clash', 'STASH')">STASH</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('surge', 'SURGE')">SURGE</button>
-                    <button type="button" class="client-btn" onclick="generateClientLink('sing-box', 'SING-BOX')">SING-BOX</button>
+                    <button type="button" class="client-btn" onclick="generateClientLink('singbox', 'SING-BOX')">SING-BOX</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('loon', 'LOON')">LOON</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('quanx', 'QUANTUMULT X')" style="font-size: 13px;">QUANTUMULT X</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('v2ray', 'V2RAY')">V2RAY</button>
@@ -696,7 +696,7 @@ function generateHomePage(scuValue) {
                 if (clientType === 'clash') {
                     schemeUrl = clientName === 'STASH' ? 'stash://install?url=' + encodeURIComponent(finalUrl) : 'clash://install-config?url=' + encodeURIComponent(finalUrl);
                 } else if (clientType === 'surge') schemeUrl = 'surge:///install-config?url=' + encodeURIComponent(finalUrl);
-                else if (clientType === 'sing-box') schemeUrl = 'sing-box://install-config?url=' + encodeURIComponent(finalUrl);
+                else if (clientType === 'singbox') schemeUrl = 'sing-box://import-remote-profile?url=' + encodeURIComponent(finalUrl);
                 else if (clientType === 'loon') schemeUrl = 'loon://install?url=' + encodeURIComponent(finalUrl);
                 else if (clientType === 'quanx') schemeUrl = 'quantumult-x://install-config?url=' + encodeURIComponent(finalUrl);
                 
