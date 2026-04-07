@@ -655,17 +655,24 @@ function generateHomePage(scuValue) {
             const githubUrl = document.getElementById('githubUrl').value.trim();
             
             const baseUrl = new URL(window.location.href).origin;
-            let subUrl = \`\${baseUrl}/\${uuid}/sub?domain=\${encodeURIComponent(domain)}&epd=\${switches.switchDomain ? 'yes' : 'no'}&epi=\${switches.switchIP ? 'yes' : 'no'}&egi=\${switches.switchGitHub ? 'yes' : 'no'}\`;
+            let subUrl = \`\${baseUrl}/\${uuid}/sub?domain=\${encodeURIComponent(domain)}\`;
             
+            // 省略默认参数，大幅缩短链接
+            if (switches.switchDomain) subUrl += '&epd=yes';
+            if (switches.switchIP) subUrl += '&epi=yes';
+            if (!switches.switchGitHub) subUrl += '&egi=no';
             if (githubUrl) subUrl += \`&piu=\${encodeURIComponent(githubUrl)}\`;
-            if (switches.switchVL) subUrl += '&ev=yes';
+            
+            if (!switches.switchVL) subUrl += '&ev=no';
             if (switches.switchTJ) subUrl += '&et=yes';
             if (switches.switchVM) subUrl += '&mess=yes';
+            
             if (!ipv4) subUrl += '&ipv4=no';
             if (!ipv6) subUrl += '&ipv6=no';
             if (!ispMobile) subUrl += '&ispMobile=no';
             if (!ispUnicom) subUrl += '&ispUnicom=no';
             if (!ispTelecom) subUrl += '&ispTelecom=no';
+            
             if (switches.switchTLS) subUrl += '&dkby=yes';
             
             if (switches.switchECH) {
@@ -689,7 +696,9 @@ function generateHomePage(scuValue) {
                 else if (clientName === 'V2RAYNG') tryOpenApp('v2rayng://install?url=' + encodeURIComponent(finalUrl), copyAction);
                 else if (clientName === 'NEKORAY') tryOpenApp('nekoray://install-config?url=' + encodeURIComponent(finalUrl), copyAction);
             } else {
-                finalUrl = SUB_CONVERTER_URL + '?target=' + clientType + '&url=' + encodeURIComponent(subUrl) + '&insert=false&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=false&fdn=false&new_name=true';
+                // 移除大量废弃/默认的无用参数，只保留核心参数
+                finalUrl = SUB_CONVERTER_URL + '?target=' + clientType + '&url=' + encodeURIComponent(subUrl) + '&emoji=true&expand=true&new_name=true';
+                
                 document.getElementById('clientSubscriptionUrl').textContent = finalUrl;
                 document.getElementById('clientSubscriptionUrl').style.display = 'block';
                 
