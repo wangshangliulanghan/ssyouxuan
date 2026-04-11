@@ -21,6 +21,8 @@ const directDomains = [
     { domain: 'mfa.gov.ua', name: 'YM-亚太' },
     { domain: 'cf.tencentapp.cn', name: 'YM-亚太' },
     { domain: 'cf.877774.xyz', name: 'YM-亚太' }
+    { domain: 'ct.877774.xyz', name: 'YM-电信' }
+    { domain: 'cmcc.877774.xyz', name: 'YM-移动' }
 ];
 
 // ================= 辅助与性能核心 =================
