@@ -11,7 +11,17 @@ const DEFAULT_CONFIG = {
     defaultIPURL: 'https://gist.githubusercontent.com/shiyikeji/3aa87176e89a34e48f72487fbbada9d2/raw/my_best_ips.txt'
 };
 
-const directDomains = []; 
+const directDomains = [
+    { domain: 'yx.cloudflare.182682.xyz', name: 'YM-多地' },
+    { domain: 'cdn.2020111.xyz', name: 'YM-多地' },
+    { domain: 'yx.cf.licdn.top', name: 'YM-多地' },
+    { domain: 'speed.marisalnc.com', name: 'YM-多地' },
+    { domain: 'freeyx.cloudflare88.eu.org', name: 'YM-欧洲' },
+    { domain: 'youxuan.cf.090227.xyz', name: 'YM-多地' },
+    { domain: 'mfa.gov.ua', name: 'YM-乌克兰' },
+    { domain: 'cf.tencentapp.cn', name: 'YM-中国' },
+    { domain: 'cf.877774.xyz', name: 'YM-多地' }
+];
 
 // ================= 辅助与性能核心 =================
 
