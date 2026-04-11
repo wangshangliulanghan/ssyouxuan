@@ -20,8 +20,8 @@ const directDomains = [
     { domain: 'youxuan.cf.090227.xyz', name: 'YM-亚太' },
     { domain: 'mfa.gov.ua', name: 'YM-亚太' },
     { domain: 'cf.tencentapp.cn', name: 'YM-亚太' },
-    { domain: 'cf.877774.xyz', name: 'YM-亚太' }
-    { domain: 'ct.877774.xyz', name: 'YM-电信' }
+    { domain: 'cf.877774.xyz', name: 'YM-亚太' },  // 这里补上了逗号
+    { domain: 'ct.877774.xyz', name: 'YM-电信' },  // 这里补上了逗号
     { domain: 'cmcc.877774.xyz', name: 'YM-移动' }
 ];
 
