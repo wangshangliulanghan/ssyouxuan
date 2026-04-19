@@ -1,13 +1,12 @@
-// Cloudflare Worker - 极限性能版优选工具 (v5.2.2 极客原生版：修复UI复选框显示 + 原生直出 + 随机伪装)
-// 核心：彻底移除转换器 + 随机路径防扫描 + 原生 Sing-box/Clash 编译 + 晚高峰 h2 固定
+// Cloudflare Worker - 极限性能版优选工具 (v5.3 稳定版：修复 EOF 报错，剔除错误伪装，纯净直连)
 
 const DEFAULT_CONFIG = {
     epd: false, epi: false, egi: true,
     ev: true, et: false, vm: false,
-    scu: 'https://url.v1.mk/sub', // 仅留作冷门客户端备用
+    scu: 'https://url.v1.mk/sub', 
     enableECH: false,
     customDNS: 'https://dns.joeyblog.eu.org/joeyblog',
-    customECHDomain: 'dash.cloudflare.com', // 默认改用大厂白名单域名
+    customECHDomain: 'dash.cloudflare.com',
     defaultIPURL: 'https://gist.githubusercontent.com/shiyikeji/3aa87176e89a34e48f72487fbbada9d2/raw/my_best_ips.txt'
 };
 
@@ -54,22 +53,6 @@ async function fetchWithTimeout(url, timeoutMs = 3000) {
 async function hashKey(str) {
     const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
     return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-// 🚀 核心伪装优化：WS路径 + Host 随机化
-function randomPath() {
-    const paths = [
-        "/cdn/api/v1/data", "/assets/img/loader.js", "/api/v2/update",
-        "/static/js/runtime.js", "/query?v=2", "/edge/compute"
-    ];
-    return paths[Math.floor(Math.random() * paths.length)];
-}
-
-function randomHost(workerDomain) {
-    const hosts = [
-        workerDomain, "dash.cloudflare.com", "www.cloudflare.com", "static.cloudflareinsights.com"
-    ];
-    return hosts[Math.floor(Math.random() * hosts.length)];
 }
 
 // ================= 全局 KV 缓存架构 =================
@@ -195,14 +178,14 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
             const tls = port !== 80;
             if (disableNonTLS && !tls) continue;
 
-            const wsPath = customPath && customPath !== "/" ? customPath : randomPath();
-            const host = randomHost(workerDomain);
+            // ✅ 修复点：老老实实使用用户定义的路径和Host，坚决不搞域名前置
+            const wsPath = customPath || "/";
+            const host = workerDomain; 
             
             let params = `type=ws&host=${host}&path=${encodeURIComponent(wsPath)}&security=${tls ? 'tls' : 'none'}`;
             if (tls) {
                 params += `&sni=${workerDomain}`;
-                params += `&alpn=h2`; // 🔥 强制 h2 防 UDP 丢包
-                if (echEnabled) params += `&ech=true`; // ECH 标记下发，交由客户端解析
+                if (echEnabled) params += `&ech=true`; 
             }
 
             if (protocols.evEnabled) links.push(`vless://${user}@${safeIP}:${port}?encryption=none&${params}#${encodeURIComponent(baseName)}`);
@@ -272,7 +255,6 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
     let subscriptionContent;
     let contentType = 'text/plain; charset=utf-8';
     
-    // 🚀 全面接管客户端生成，抛弃公共 API
     switch (config.target.toLowerCase()) {
         case 'clash':
         case 'clashr':
@@ -379,8 +361,6 @@ function generateHomePage(scuValue) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>服务器优选工具</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -389,46 +369,31 @@ function generateHomePage(scuValue) {
         .header { text-align: center; padding: 48px 20px 32px; }
         .header h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.3px; color: #1d1d1f; margin-bottom: 8px; line-height: 1.1; }
         .header p { font-size: 17px; color: #86868b; font-weight: 400; line-height: 1.5; }
-        .card { background: rgba(255, 255, 255, 0.75); backdrop-filter: blur(30px) saturate(200%); -webkit-backdrop-filter: blur(30px) saturate(200%); border-radius: 24px; padding: 28px; margin-bottom: 20px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.05); border: 0.5px solid rgba(0, 0, 0, 0.06); }
+        .card { background: rgba(255, 255, 255, 0.75); backdrop-filter: blur(30px) saturate(200%); border-radius: 24px; padding: 28px; margin-bottom: 20px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06); border: 0.5px solid rgba(0, 0, 0, 0.06); }
         .form-group { margin-bottom: 24px; }
         .form-group:last-child { margin-bottom: 0; }
-        .form-group label { display: block; font-size: 13px; font-weight: 600; color: #86868b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .form-group input, .form-group textarea { width: 100%; padding: 14px 16px; font-size: 17px; font-weight: 400; color: #1d1d1f; background: rgba(142, 142, 147, 0.12); border: 2px solid transparent; border-radius: 12px; outline: none; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); -webkit-appearance: none; }
-        .form-group input:focus, .form-group textarea:focus { background: rgba(142, 142, 147, 0.16); border-color: #007AFF; transform: scale(1.005); }
-        .form-group input::placeholder, .form-group textarea::placeholder { color: #86868b; }
-        .form-group small { display: block; margin-top: 8px; color: #86868b; font-size: 13px; line-height: 1.4; }
-        .list-item { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; min-height: 52px; cursor: pointer; border-bottom: 0.5px solid rgba(0, 0, 0, 0.08); transition: background-color 0.15s ease; }
+        .form-group label { display: block; font-size: 13px; font-weight: 600; color: #86868b; margin-bottom: 8px; text-transform: uppercase; }
+        .form-group input { width: 100%; padding: 14px 16px; font-size: 17px; background: rgba(142, 142, 147, 0.12); border: 2px solid transparent; border-radius: 12px; outline: none; transition: all 0.2s; }
+        .form-group input:focus { background: rgba(142, 142, 147, 0.16); border-color: #007AFF; transform: scale(1.005); }
+        .list-item { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; min-height: 52px; cursor: pointer; border-bottom: 0.5px solid rgba(0, 0, 0, 0.08); }
         .list-item:last-child { border-bottom: none; }
-        .list-item:active { background-color: rgba(142, 142, 147, 0.08); margin: 0 -28px; padding-left: 28px; padding-right: 28px; }
-        .list-item-label { font-size: 17px; font-weight: 400; color: #1d1d1f; flex: 1; }
-        .list-item-description { font-size: 13px; color: #86868b; margin-top: 4px; line-height: 1.4; }
-        .switch { position: relative; width: 51px; height: 31px; background: rgba(142, 142, 147, 0.3); border-radius: 16px; transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; flex-shrink: 0; }
+        .list-item-label { font-size: 17px; color: #1d1d1f; }
+        .switch { width: 51px; height: 31px; background: rgba(142, 142, 147, 0.3); border-radius: 16px; position: relative; transition: 0.3s; }
         .switch.active { background: #34C759; }
-        .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; background: #ffffff; border-radius: 50%; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1); }
+        .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; background: #ffffff; border-radius: 50%; transition: 0.3s; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
         .switch.active::after { transform: translateX(20px); }
-        .btn { width: 100%; padding: 16px; font-size: 17px; font-weight: 600; color: #ffffff; background: #007AFF; border: none; border-radius: 14px; cursor: pointer; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); margin-top: 8px; box-shadow: 0 4px 12px rgba(0, 122, 255, 0.25); }
-        .btn:hover { background: #0051D5; box-shadow: 0 6px 16px rgba(0, 122, 255, 0.3); }
-        .btn:active { transform: scale(0.97); box-shadow: 0 2px 8px rgba(0, 122, 255, 0.2); }
         .result-url { margin-top: 12px; padding: 12px; background: rgba(0, 122, 255, 0.1); border-radius: 10px; font-size: 13px; color: #007aff; word-break: break-all; display: none; line-height: 1.5; }
-        .client-btn { padding: 12px 16px; font-size: 14px; font-weight: 500; color: #007AFF; background: rgba(0, 122, 255, 0.1); border: 1px solid rgba(0, 122, 255, 0.2); border-radius: 12px; cursor: pointer; transition: all 0.2s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-        .client-btn:active { transform: scale(0.97); background: rgba(0, 122, 255, 0.2); border-color: rgba(0, 122, 255, 0.3); }
-        
-        /* 🚀 核心修复点：还原原生复选框样式 */
-        .checkbox-label { display: flex; align-items: center; cursor: pointer; font-size: 17px; font-weight: 400; user-select: none; -webkit-user-select: none; position: relative; z-index: 1; padding: 8px 0; }
-        .checkbox-label input[type="checkbox"] { margin-right: 12px; width: 22px; height: 22px; cursor: pointer; flex-shrink: 0; position: relative; z-index: 2; -webkit-appearance: checkbox; appearance: checkbox; }
-        .checkbox-label span { cursor: pointer; position: relative; z-index: 1; }
-        
-        @media (max-width: 480px) { .client-btn { font-size: 12px; padding: 10px 12px; } .header h1 { font-size: 34px; } }
-        .footer { text-align: center; padding: 32px 20px; color: #86868b; font-size: 13px; }
-        .footer a { color: #007AFF; text-decoration: none; font-weight: 500; transition: opacity 0.2s ease; }
-        .footer a:active { opacity: 0.6; }
+        .client-btn { padding: 12px 16px; font-size: 14px; font-weight: 500; color: #007AFF; background: rgba(0, 122, 255, 0.1); border: 1px solid rgba(0, 122, 255, 0.2); border-radius: 12px; cursor: pointer; transition: all 0.2s; }
+        .client-btn:active { transform: scale(0.97); background: rgba(0, 122, 255, 0.2); }
+        .checkbox-label { display: flex; align-items: center; cursor: pointer; font-size: 17px; gap: 8px; }
+        .checkbox-label input[type="checkbox"] { width: 22px; height: 22px; cursor: pointer; -webkit-appearance: checkbox; }
         @media (prefers-color-scheme: dark) {
             body { background: linear-gradient(180deg, #000000 0%, #1c1c1e 50%, #2c2c2e 100%); color: #f5f5f7; }
-            .card { background: rgba(28, 28, 30, 0.75); border: 0.5px solid rgba(255, 255, 255, 0.12); }
-            .form-group input, .form-group textarea { background: rgba(142, 142, 147, 0.2); color: #f5f5f7; }
-            .form-group input:focus { background: rgba(142, 142, 147, 0.25); border-color: #5ac8fa; }
+            .card { background: rgba(28, 28, 30, 0.75); border-color: rgba(255, 255, 255, 0.12); }
+            .form-group input { background: rgba(142, 142, 147, 0.2); color: #f5f5f7; }
+            .form-group input:focus { border-color: #5ac8fa; }
             .list-item { border-bottom-color: rgba(255, 255, 255, 0.1); }
-            .list-item:active { background: rgba(255, 255, 255, 0.08); }
+            .list-item-label { color: #f5f5f7; }
             .switch { background: rgba(142, 142, 147, 0.4); }
             .switch.active { background: #30d158; }
             .client-btn { background: rgba(0, 122, 255, 0.15); border-color: rgba(0, 122, 255, 0.3); color: #5ac8fa; }
@@ -439,7 +404,7 @@ function generateHomePage(scuValue) {
     <div class="container">
         <div class="header">
             <h1>服务器优选工具</h1>
-            <p>原生编译架构 • 突破网络协议封锁</p>
+            <p>全原生直出 • 零转换器污染 • V5.3稳定版</p>
         </div>
         
         <div class="card">
@@ -455,7 +420,7 @@ function generateHomePage(scuValue) {
             
             <div class="form-group">
                 <label>WebSocket路径（可选）</label>
-                <input type="text" id="customPath" placeholder="留空则使用内置随机混淆路径" value="/">
+                <input type="text" id="customPath" placeholder="留空则使用根路径 /" value="/">
             </div>
             
             <div class="list-item" onclick="toggleSwitch('switchDomain')">
@@ -475,7 +440,7 @@ function generateHomePage(scuValue) {
             
             <div class="form-group" id="githubUrlGroup" style="margin-top: 12px;">
                 <label>GitHub优选URL（可选）</label>
-                <input type="text" id="githubUrl" placeholder="留空则使用内置的纯净链接" style="font-size: 15px;">
+                <input type="text" id="githubUrl" placeholder="留空则使用内置的纯净链接">
             </div>
             
             <div class="form-group" style="margin-top: 24px;">
@@ -505,7 +470,6 @@ function generateHomePage(scuValue) {
                     <button type="button" class="client-btn" onclick="generateClientLink('singbox', 'SING-BOX')">SING-BOX 原生直出</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('v2ray', 'NEKORAY')">NEKORAY</button>
                     <button type="button" class="client-btn" onclick="generateClientLink('v2ray', 'Shadowrocket')">Shadowrocket</button>
-                    <button type="button" class="client-btn" onclick="generateClientLink('loon', 'LOON')">LOON (依赖转换器)</button>
                 </div>
                 <div class="result-url" id="clientSubscriptionUrl" style="display: none;"></div>
             </div>
@@ -528,49 +492,27 @@ function generateHomePage(scuValue) {
             </div>
             
             <div class="list-item" onclick="toggleSwitch('switchTLS')" style="margin-top: 8px;">
-                <div>
-                    <div class="list-item-label">仅TLS节点</div>
-                </div>
+                <div><div class="list-item-label">仅TLS节点</div></div>
                 <div class="switch" id="switchTLS"></div>
             </div>
             
             <div class="list-item" onclick="toggleSwitch('switchECH')" style="margin-top: 8px;">
-                <div>
-                    <div class="list-item-label">ECH 隐身保护 (Sing-box/Meta)</div>
-                </div>
+                <div><div class="list-item-label">ECH 隐身保护 (Sing-box/Meta)</div></div>
                 <div class="switch" id="switchECH"></div>
-            </div>
-            <div class="form-group" id="echOptionsGroup" style="margin-top: 12px; display: none;">
-                <label>ECH 自定义 DNS（可选）</label>
-                <input type="text" id="customDNS" placeholder="留空使用默认安全通道" style="font-size: 14px;">
-                <label style="margin-top: 12px; display: block;">ECH 域名（可选）</label>
-                <input type="text" id="customECHDomain" placeholder="默认: dash.cloudflare.com" style="font-size: 14px;">
             </div>
         </div>
         
-        <div class="footer">
-            <p>V5.2 极客定制版 • 捍卫网络协议尊严</p>
-        </div>
+        <div class="footer"><p>V5.3 终极稳定版 • 拒绝花里胡哨，回归物理直连</p></div>
     </div>
     
     <script>
-        let switches = {
-            switchDomain: false, switchIP: false, switchGitHub: true, switchVL: true,
-            switchTJ: false, switchVM: false, switchTLS: false, switchECH: false
-        };
-        
+        let switches = { switchDomain: false, switchIP: false, switchGitHub: true, switchVL: true, switchTJ: false, switchVM: false, switchTLS: false, switchECH: false };
         function toggleSwitch(id) {
-            const switchEl = document.getElementById(id);
             switches[id] = !switches[id];
-            switchEl.classList.toggle('active');
-            if (id === 'switchECH') {
-                const echOpt = document.getElementById('echOptionsGroup');
-                if (echOpt) echOpt.style.display = switches.switchECH ? 'block' : 'none';
-                if (switches.switchECH && !switches.switchTLS) {
-                    switches.switchTLS = true;
-                    const tlsEl = document.getElementById('switchTLS');
-                    if (tlsEl) tlsEl.classList.add('active');
-                }
+            document.getElementById(id).classList.toggle('active');
+            if (id === 'switchECH' && switches.switchECH && !switches.switchTLS) {
+                switches.switchTLS = true;
+                document.getElementById('switchTLS').classList.add('active');
             }
         }
         
@@ -631,24 +573,14 @@ function generateHomePage(scuValue) {
             if (!ispTelecom) subUrl += '&ispTelecom=no';
 
             if (switches.switchTLS) subUrl += '&dkby=yes';
-
-            if (switches.switchECH) {
-                subUrl += '&ech=yes';
-                const dnsVal = document.getElementById('customDNS')?.value.trim();
-                if (dnsVal) subUrl += \`&customDNS=\${encodeURIComponent(dnsVal)}\`;
-                const domainVal = document.getElementById('customECHDomain')?.value.trim();
-                if (domainVal) subUrl += \`&customECHDomain=\${encodeURIComponent(domainVal)}\`;
-            }
+            if (switches.switchECH) subUrl += '&ech=yes';
             if (customPath && customPath !== '/') subUrl += \`&path=\${encodeURIComponent(customPath)}\`;
 
             let finalUrl = subUrl;
             let schemeUrl = '';
 
-            // 🚀 原生请求拦截
             if (['v2ray', 'clash', 'surge', 'singbox'].includes(clientType)) {
-                if (clientType !== 'v2ray') {
-                    finalUrl += \`&target=\${clientType}\`;
-                }
+                if (clientType !== 'v2ray') finalUrl += \`&target=\${clientType}\`;
                 
                 document.getElementById('clientSubscriptionUrl').textContent = finalUrl;
                 document.getElementById('clientSubscriptionUrl').style.display = 'block';
@@ -658,23 +590,10 @@ function generateHomePage(scuValue) {
                 else if (clientName === 'Shadowrocket') schemeUrl = 'shadowrocket://add/' + encodeURIComponent(finalUrl);
                 else if (clientName === 'V2RAYNG') schemeUrl = 'v2rayng://install?url=' + encodeURIComponent(finalUrl);
                 else if (clientName === 'NEKORAY') schemeUrl = 'nekoray://install-config?url=' + encodeURIComponent(finalUrl);
-                else if (clientType === 'clash') schemeUrl = clientName === 'STASH' ? 'stash://install?url=' + encodeURIComponent(finalUrl) : 'clash://install-config?url=' + encodeURIComponent(finalUrl);
+                else if (clientType === 'clash') schemeUrl = 'clash://install-config?url=' + encodeURIComponent(finalUrl);
                 else if (clientType === 'surge') schemeUrl = 'surge:///install-config?url=' + encodeURIComponent(finalUrl);
                 else if (clientType === 'singbox') schemeUrl = 'sing-box://import-remote-profile?url=' + encodeURIComponent(finalUrl);
 
-                if (schemeUrl) tryOpenApp(schemeUrl, copyAction);
-                else copyAction();
-                
-            } else {
-                // 冷门客户端走公共接口
-                finalUrl = SUB_CONVERTER_URL + '?target=' + clientType + '&url=' + encodeURIComponent(subUrl) + '&emoji=true&expand=true&new_name=true';
-                document.getElementById('clientSubscriptionUrl').textContent = finalUrl;
-                document.getElementById('clientSubscriptionUrl').style.display = 'block';
-                
-                if (clientType === 'loon') schemeUrl = 'loon://install?url=' + encodeURIComponent(finalUrl);
-                else if (clientType === 'quanx') schemeUrl = 'quantumult-x://install-config?url=' + encodeURIComponent(finalUrl);
-                
-                const copyAction = () => navigator.clipboard.writeText(finalUrl).then(() => alert(clientName + ' 订阅链接已复制'));
                 if (schemeUrl) tryOpenApp(schemeUrl, copyAction);
                 else copyAction();
             }
@@ -690,7 +609,6 @@ export default {
         const path = url.pathname;
         
         if (path === '/' || path === '') {
-            // ✅ 核心修复：确保 scu 变量正确传递
             return new Response(generateHomePage(env?.scu || DEFAULT_CONFIG.scu), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
         if (path === '/test-optimize-api') { return new Response('OK'); }
