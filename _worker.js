@@ -7,7 +7,7 @@ const DEFAULT_CONFIG = {
     scu: 'https://url.v1.mk/sub',
     enableECH: false,
     customDNS: 'https://dns.joeyblog.eu.org/joeyblog',
-    customECHDomain: 'cloudflare-ech.com',
+    customECHDomain: 'dash.cloudflare.com',
     defaultIPURL: 'https://gist.githubusercontent.com/shiyikeji/3aa87176e89a34e48f72487fbbada9d2/raw/my_best_ips.txt'
 };
 
