@@ -1,5 +1,5 @@
-// Cloudflare Worker - 极限性能版优选工具 (v4.2.1 尊享版：三层权重评分 + KV/Edge双缓存 + 完整UI + 全局去重 + WS伪装强化 + ECH正确注入 + 晚高峰h2固定)
-// 核心升级：彻底移除公共订阅转换器依赖 + ECH参数真实生效 + 零暗坑
+// Cloudflare Worker - 极限性能版优选工具 (v4.1 尊享版：三层权重评分 + KV/Edge双缓存 + 完整UI + 全局去重)
+// 终极架构：CloudflareST -> GitHub -> Worker KV -> Edge CDN -> 手机订阅
 
 const DEFAULT_CONFIG = {
     epd: false, epi: false, egi: true,
@@ -7,7 +7,7 @@ const DEFAULT_CONFIG = {
     scu: 'https://url.v1.mk/sub',
     enableECH: false,
     customDNS: 'https://dns.joeyblog.eu.org/joeyblog',
-    customECHDomain: 'dash.cloudflare.com',
+    customECHDomain: 'cloudflare-ech.com',
     defaultIPURL: 'https://gist.githubusercontent.com/shiyikeji/3aa87176e89a34e48f72487fbbada9d2/raw/my_best_ips.txt'
 };
 
@@ -20,16 +20,17 @@ const directDomains = [
     { domain: 'youxuan.cf.090227.xyz', name: 'YM-亚太' },
     { domain: 'mfa.gov.ua', name: 'YM-亚太' },
     { domain: 'cf.tencentapp.cn', name: 'YM-亚太' },
-    { domain: 'cf.877774.xyz', name: 'YM-亚太' },
-    { domain: 'ct.877774.xyz', name: 'YM-电信' },
+    { domain: 'cf.877774.xyz', name: 'YM-亚太' },  // 这里补上了逗号
+    { domain: 'ct.877774.xyz', name: 'YM-电信' },  // 这里补上了逗号
     { domain: 'cmcc.877774.xyz', name: 'YM-移动' }
 ];
 
 // ================= 辅助与性能核心 =================
+
 function safeBase64Encode(str) {
     const bytes = new TextEncoder().encode(str);
     let binary = '';
-    const chunkSize = 8192;
+    const chunkSize = 8192; 
     for (let i = 0; i < bytes.length; i += chunkSize) {
         binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
     }
@@ -50,24 +51,10 @@ async function fetchWithTimeout(url, timeoutMs = 3000) {
     }
 }
 
+// v4.1 新增：SHA-256 哈希处理，防止 KV Key 过长
 async function hashKey(str) {
     const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
     return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function randomPath() {
-    const paths = [
-        "/cdn/api/v1/data", "/assets/img/loader.js", "/api/v2/update",
-        "/static/js/runtime.js", "/query?v=2", "/edge/compute"
-    ];
-    return paths[Math.floor(Math.random() * paths.length)];
-}
-
-function randomHost(workerDomain) {
-    const hosts = [
-        workerDomain, "dash.cloudflare.com", "www.cloudflare.com", "static.cloudflareinsights.com"
-    ];
-    return hosts[Math.floor(Math.random() * hosts.length)];
 }
 
 // ================= 全局 KV 缓存架构 =================
@@ -75,13 +62,14 @@ async function getCachedData(env, ctx, key, fetcher, ttl = 600) {
     if (env?.IP_CACHE) {
         const cached = await env.IP_CACHE.get(key, 'json');
         if (cached && cached.length > 0) return cached;
+        
         const freshData = await fetcher();
         if (freshData && freshData.length > 0) {
             ctx.waitUntil(env.IP_CACHE.put(key, JSON.stringify(freshData), { expirationTtl: ttl }));
         }
         return freshData;
     }
-    return await fetcher();
+    return await fetcher(); 
 }
 
 // ================= 数据源抓取 =================
@@ -98,17 +86,23 @@ async function fetchAndParseWetestAPI(url) {
 async function fetchDynamicIPs(env, ctx, ipv4Enabled, ipv6Enabled, ispMobile, ispUnicom, ispTelecom) {
     const v4Url = "https://www.wetest.vip/page/cloudflare/address_v4.txt";
     const v6Url = "https://www.wetest.vip/page/cloudflare/address_v6.txt";
+    
     const fetchPromises = [
         ipv4Enabled ? getCachedData(env, ctx, 'wetest_v4', () => fetchAndParseWetestAPI(v4Url)) : [],
         ipv6Enabled ? getCachedData(env, ctx, 'wetest_v6', () => fetchAndParseWetestAPI(v6Url)) : []
     ];
+
     try {
         const [ipv4List, ipv6List] = await Promise.all(fetchPromises);
         let results = [...ipv4List, ...ipv6List];
-        if (results.length > 0) {
+        
+if (results.length > 0) {
             results = results.filter(item => {
                 const name = item.name || '';
+                
+                // 🚀 新增：精准狙击，遇到“官方优选IPv6”直接扔掉
                 if (name.includes('官方优选IPv6')) return false;
+
                 if (name.includes('移动') && !ispMobile) return false;
                 if (name.includes('联通') && !ispUnicom) return false;
                 if (name.includes('电信') && !ispTelecom) return false;
@@ -124,16 +118,19 @@ async function fetchDynamicIPs(env, ctx, ipv4Enabled, ipv6Enabled, ispMobile, is
 async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
     if (!urls?.length) return [];
     const results = new Set();
+    
     await Promise.allSettled(urls.map(async (url) => {
         try {
             const response = await fetchWithTimeout(url, timeoutMs);
             const buffer = await response.arrayBuffer();
             let text = new TextDecoder('utf-8').decode(buffer);
-            if (text.includes('\ufffd')) text = new TextDecoder('gb2312').decode(buffer);
+            if (text.includes('\ufffd')) text = new TextDecoder('gb2312').decode(buffer); 
             if (!text || !text.trim()) return;
+
             const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
             const isCSV = lines.length > 1 && lines[0].includes(',');
             const IPV6_PATTERN = /^[^\[\]]*:[^\[\]]*:[^\[\]]/;
+            
             if (!isCSV) {
                 for (const line of lines) {
                     const hashIndex = line.indexOf('#');
@@ -161,7 +158,7 @@ async function fetchOptimizedAPI(urls, defaultPort = '443', timeoutMs = 3000) {
 
 async function fetchGitHubIPs(env, ctx, piu) {
     const url = piu || DEFAULT_CONFIG.defaultIPURL;
-    const hashedUrl = await hashKey(url);
+    const hashedUrl = await hashKey(url); // v4.1: 对 URL 进行哈希处理防止溢出
     return getCachedData(env, ctx, `github_${hashedUrl}`, async () => {
         try {
             const response = await fetchWithTimeout(url);
@@ -188,42 +185,39 @@ function parseRawIps(rawIps) {
     return results;
 }
 
-// ================= 核心节点生成（v4.2.1 强化版） =================
-function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echEnabled, protocols) {
+// ================= 核心节点生成 =================
+function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPath, echConfig, protocols) {
     const links = [];
+    const wsPath = customPath || '/';
+
     for (const item of list) {
-        const baseName = item.name || item.ip;
+        const baseName = item.isp ? item.isp.replace(/\s/g, '_') : (item.name || item.domain || item.ip);
+        const nodeNameBase = item.colo && item.colo.trim() ? `${baseName}-${item.colo.trim()}` : baseName;
         const safeIP = item.ip.includes(':') ? `[${item.ip}]` : item.ip;
-      
-        const ports = item.port ? [item.port] : (disableNonTLS ? [443] : [443, 80]);
-        for (const port of ports) {
-            const tls = port !== 80;
+        
+// 🚀 终极修正：如果原数据自带端口（如 8443），必须保留！否则才回退到默认 443
+const portsToGenerate = item.port ? [item.port] : (disableNonTLS ? [443] : [443, 80]);
+
+        for (const port of portsToGenerate) {
+            const tls = port !== 80 && port !== 8080;
             if (disableNonTLS && !tls) continue;
 
-            const wsPath = customPath && customPath !== "/" ? customPath : randomPath();
-            const host = randomHost(workerDomain);
-            
-            let params = `type=ws&host=${host}&path=${encodeURIComponent(wsPath)}&security=${tls ? 'tls' : 'none'}`;
-            
+            let params = `type=ws&host=${workerDomain}&path=${wsPath}&security=${tls ? 'tls' : 'none'}`;
             if (tls) {
-                params += `&sni=${workerDomain}`;
-                params += `&alpn=h2`;
-                if (echEnabled) params += `&ech=true`;   // v4.2.1 真正注入 ECH
+                params += `&sni=${workerDomain}&fp=chrome`;
+                if (echConfig) params += `&alpn=h3,h2,http/1.1&ech=${echConfig}`;
             }
 
-            // VLESS（默认开启）
-            if (protocols.evEnabled !== false) {
-                links.push(`vless://${user}@${safeIP}:${port}?encryption=none&${params}#${encodeURIComponent(baseName)}`);
+            if (protocols.evEnabled) {
+                links.push(`vless://${user}@${safeIP}:${port}?encryption=none&${params}#${encodeURIComponent(nodeNameBase)}`);
             }
-            // Trojan
-            if (protocols.etEnabled === true) {
-                links.push(`trojan://${user}@${safeIP}:${port}?${params}#${encodeURIComponent(baseName)}`);
+            if (protocols.etEnabled) {
+                links.push(`trojan://${user}@${safeIP}:${port}?${params}#${encodeURIComponent(nodeNameBase)}`);
             }
-            // VMess
-            if (protocols.vmEnabled === true) {
+            if (protocols.vmEnabled) {
                 const vmessConfig = {
-                    v: "2", ps: baseName, add: safeIP, port: port.toString(), id: user, aid: "0", scy: "auto",
-                    net: "ws", type: "none", host: host, path: wsPath,
+                    v: "2", ps: nodeNameBase, add: safeIP, port: port.toString(), id: user, aid: "0", scy: "auto",
+                    net: "ws", type: "none", host: workerDomain, path: wsPath,
                     tls: tls ? "tls" : "none"
                 };
                 if (tls) {
@@ -245,15 +239,19 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
         etEnabled: config.etEnabled,
         vmEnabled: config.vmEnabled
     };
+
     let allRawNodes = [];
 
+    // 1. 收集所有数据源
     if (config.epdEnabled) {
         allRawNodes.push(...directDomains.map(d => ({ ip: d.domain, port: 443, name: d.name || d.domain })));
     }
+
     if (config.epiEnabled) {
         const dynamicIPList = await fetchDynamicIPs(env, ctx, config.ipv4Enabled, config.ipv6Enabled, config.ispMobile, config.ispUnicom, config.ispTelecom);
         if (dynamicIPList.length > 0) allRawNodes.push(...dynamicIPList);
     }
+
     if (config.egiEnabled) {
         try {
             if (config.piu && config.piu.toLowerCase().startsWith('https://') && !config.piu.includes('\n')) {
@@ -273,7 +271,7 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
         } catch (error) {}
     }
 
-    // 全局精准去重
+    // v4.1 新增：2. 全局 Map 精准去重 (IP:Port 为唯一键)
     const uniqueNodesMap = new Map();
     for (const node of allRawNodes) {
         if (node && node.ip) {
@@ -282,24 +280,29 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
     }
     let deduplicatedList = Array.from(uniqueNodesMap.values());
 
-    // 三层权重打分
+    // v4.1 升级：3. 终极三层权重打分 + 扩容版词库
     const godPrefixes = ['43.161.', '43.160.', '43.152.', '8.210.', '47.74.', '47.76.', '47.79.', '129.226.', '150.109.', '54.251.', '54.169.', '18.136.', '13.212.', '52.220.', '34.87.', '34.124.', '35.185.', '35.197.', '20.198.', '20.205.', '40.79.', '52.187.', '128.199.', '139.59.', '134.209.', '45.32.', '149.28.', '139.180.'];
     const hkKeywords = ['香港', 'HK', 'HKG', 'HKT', 'HKBN', 'HONGKONG'];
+
     const sortedList = deduplicatedList.map(item => {
         const isGod = godPrefixes.some(prefix => item.ip.startsWith(prefix));
         const nameStr = item.name || item.ip || '';
         const isHK = hkKeywords.some(k => nameStr.toUpperCase().includes(k));
+        
         let score = 0;
         if (isGod) score += 100;
         if (isHK) score += 50;
+
         let finalName = nameStr;
         if (isGod) finalName = `🚀神级-${nameStr}`;
         else if (isHK && !isGod) finalName = `🇭🇰优选-${nameStr}`;
-        return { ...item, _score: score, name: finalName };
-    }).sort((a, b) => b._score - a._score);
 
+        return { ...item, _score: score, name: finalName };
+    }).sort((a, b) => b._score - a._score); // 降序排列
+
+    // 4. 生成节点列表
     if (sortedList.length > 0) {
-        finalLinks.push(...generateNodesFromList(sortedList, config.user, config.nodeDomain, config.disableNonTLS, config.customPath, config.echEnabled, protocols));
+        finalLinks.push(...generateNodesFromList(sortedList, config.user, config.nodeDomain, config.disableNonTLS, config.customPath, config.echConfig, protocols));
     }
 
     if (finalLinks.length === 0) {
@@ -308,7 +311,7 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
 
     let subscriptionContent;
     let contentType = 'text/plain; charset=utf-8';
-
+    
     switch (config.target.toLowerCase()) {
         case 'clash':
         case 'clashr':
@@ -324,11 +327,12 @@ async function handleSubscriptionRequest(request, env, ctx, config) {
         default:
             subscriptionContent = safeBase64Encode(finalLinks.join('\n'));
     }
-
+    
     return new Response(subscriptionContent, {
-        headers: {
+        headers: { 
             'Content-Type': contentType,
-            'Cache-Control': 'public, max-age=600, s-maxage=600',
+            // v4.1 升级：对齐 KV 缓存周期，提升到 600 秒
+            'Cache-Control': 'public, max-age=600, s-maxage=600', 
             'Access-Control-Allow-Origin': '*',
             'Content-Disposition': 'attachment; filename="sub.txt"',
         },
@@ -342,6 +346,7 @@ function generateClashConfig(links) {
         const name = decodeURIComponent(link.split('#')[1] || `节点${index + 1}`);
         proxyNames.push(name);
         const isVless = link.startsWith('vless://');
+        
         const server = link.match(/@([^:]+):(\d+)/)?.[1] || '';
         const port = link.match(/@[^:]+:(\d+)/)?.[1] || '443';
         const passOrUuid = link.match(/:\/\/([^@]+)@/)?.[1] || '';
@@ -349,10 +354,13 @@ function generateClashConfig(links) {
         const path = link.match(/path=([^&#]+)/)?.[1] || '/';
         const host = link.match(/host=([^&#]+)/)?.[1] || '';
         const sni = link.match(/sni=([^&#]+)/)?.[1] || '';
-        yaml += ` - name: ${name}\n type: ${isVless ? 'vless' : 'trojan'}\n server: ${server}\n port: ${port}\n ${isVless ? 'uuid' : 'password'}: ${passOrUuid}\n tls: ${tls}\n network: ws\n ws-opts:\n path: ${path}\n headers:\n Host: ${host}\n`;
-        if (sni) yaml += ` servername: ${sni}\n`;
+        const echParam = link.match(/[?&]ech=([^&#]+)/)?.[1];
+        
+        yaml += `  - name: ${name}\n    type: ${isVless ? 'vless' : 'trojan'}\n    server: ${server}\n    port: ${port}\n    ${isVless ? 'uuid' : 'password'}: ${passOrUuid}\n    tls: ${tls}\n    network: ws\n    ws-opts:\n      path: ${path}\n      headers:\n        Host: ${host}\n`;
+        if (sni) yaml += `    servername: ${sni}\n`;
+        if (echParam) yaml += `    ech-opts:\n      enable: true\n      query-server-name: ${decodeURIComponent(echParam).split('+')[0]}\n`;
     });
-    yaml += `\nproxy-groups:\n - name: PROXY\n type: select\n proxies: [${proxyNames.map(n => `'${n}'`).join(', ')}]\nrules:\n - DOMAIN-SUFFIX,local,DIRECT\n - IP-CIDR,127.0.0.0/8,DIRECT\n - GEOIP,CN,DIRECT\n - MATCH,PROXY\n`;
+    yaml += `\nproxy-groups:\n  - name: PROXY\n    type: select\n    proxies: [${proxyNames.map(n => `'${n}'`).join(', ')}]\nrules:\n  - DOMAIN-SUFFIX,local,DIRECT\n  - IP-CIDR,127.0.0.0/8,DIRECT\n  - GEOIP,CN,DIRECT\n  - MATCH,PROXY\n`;
     return yaml;
 }
 
@@ -366,8 +374,9 @@ function generateSurgeConfig(links) {
     return config;
 }
 
-// ================= UI 与前端逻辑（v4.2.1 零转换器版） =================
-function generateHomePage() {
+// ================= UI 与前端逻辑 =================
+function generateHomePage(scuValue) {
+    const scu = scuValue || 'https://url.v1.mk/sub';
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -383,7 +392,7 @@ function generateHomePage() {
         .header { text-align: center; padding: 48px 20px 32px; }
         .header h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.3px; color: #1d1d1f; margin-bottom: 8px; line-height: 1.1; }
         .header p { font-size: 17px; color: #86868b; font-weight: 400; line-height: 1.5; }
-        .card { background: rgba(255, 255, 255, 0.75); backdrop-filter: blur(30px) saturate(200%); -webkit-backdrop-filter: blur(30px) saturate(200%); border-radius: 24px; padding: 28px; margin-bottom: 20px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.05); border: 0.5px solid rgba(0, 0, 0, 0.06); }
+        .card { background: rgba(255, 255, 255, 0.75); backdrop-filter: blur(30px) saturate(200%); -webkit-backdrop-filter: blur(30px) saturate(200%); border-radius: 24px; padding: 28px; margin-bottom: 20px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.05); border: 0.5px solid rgba(0, 0, 0, 0.06); will-change: transform; }
         .form-group { margin-bottom: 24px; }
         .form-group:last-child { margin-bottom: 0; }
         .form-group label { display: block; font-size: 13px; font-weight: 600; color: #86868b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -400,10 +409,13 @@ function generateHomePage() {
         .switch.active { background: #34C759; }
         .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; background: #ffffff; border-radius: 50%; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1); }
         .switch.active::after { transform: translateX(20px); }
-        .btn { width: 100%; padding: 16px; font-size: 17px; font-weight: 600; color: #ffffff; background: #007AFF; border: none; border-radius: 14px; cursor: pointer; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); margin-top: 8px; -webkit-appearance: none; box-shadow: 0 4px 12px rgba(0, 122, 255, 0.25); }
+        .btn { width: 100%; padding: 16px; font-size: 17px; font-weight: 600; color: #ffffff; background: #007AFF; border: none; border-radius: 14px; cursor: pointer; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); margin-top: 8px; -webkit-appearance: none; box-shadow: 0 4px 12px rgba(0, 122, 255, 0.25); will-change: transform; }
         .btn:hover { background: #0051D5; box-shadow: 0 6px 16px rgba(0, 122, 255, 0.3); }
         .btn:active { transform: scale(0.97); box-shadow: 0 2px 8px rgba(0, 122, 255, 0.2); }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-secondary { background: rgba(142, 142, 147, 0.12); color: #007AFF; box-shadow: none; }
+        .btn-secondary:hover { background: rgba(142, 142, 147, 0.16); }
+        .btn-secondary:active { background: rgba(142, 142, 147, 0.2); }
         .result { margin-top: 20px; padding: 16px; background: rgba(142, 142, 147, 0.12); border-radius: 12px; font-size: 15px; color: #1d1d1f; word-break: break-all; display: none; line-height: 1.5; }
         .result.show { display: block; }
         .result-card { padding: 16px; background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-radius: 12px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); border: 0.5px solid rgba(0, 0, 0, 0.06); }
@@ -444,62 +456,74 @@ function generateHomePage() {
             <h1>服务器优选工具</h1>
             <p>智能优选 • 极简命名终极版</p>
         </div>
-      
+        
         <div class="card">
             <div class="form-group">
                 <label>域名</label>
                 <input type="text" id="domain" placeholder="请输入您的域名">
             </div>
-          
+            
             <div class="form-group">
                 <label>UUID/Password</label>
                 <input type="text" id="uuid" placeholder="请输入UUID或Password">
             </div>
-          
+            
             <div class="form-group">
                 <label>WebSocket路径（可选）</label>
                 <input type="text" id="customPath" placeholder="留空则使用默认路径 /" value="/">
                 <small style="display: block; margin-top: 6px; color: #86868b; font-size: 13px;">自定义WebSocket路径，例如：/v2ray 或 /</small>
             </div>
-          
+            
             <div class="list-item" onclick="toggleSwitch('switchDomain')">
-                <div><div class="list-item-label">启用优选域名</div></div>
+                <div>
+                    <div class="list-item-label">启用优选域名</div>
+                </div>
                 <div class="switch" id="switchDomain"></div>
             </div>
-          
+            
             <div class="list-item" onclick="toggleSwitch('switchIP')">
-                <div><div class="list-item-label">启用内置优选IP(含杂质)</div></div>
+                <div>
+                    <div class="list-item-label">启用内置优选IP(含杂质)</div>
+                </div>
                 <div class="switch" id="switchIP"></div>
             </div>
-          
+            
             <div class="list-item" onclick="toggleSwitch('switchGitHub')">
-                <div><div class="list-item-label">启用私有纯净IP库(推荐)</div></div>
+                <div>
+                    <div class="list-item-label">启用私有纯净IP库(推荐)</div>
+                </div>
                 <div class="switch active" id="switchGitHub"></div>
             </div>
-          
+            
             <div class="form-group" id="githubUrlGroup" style="margin-top: 12px;">
                 <label>GitHub优选URL（可选）</label>
                 <input type="text" id="githubUrl" placeholder="留空则使用内置的纯净链接" style="font-size: 15px;">
             </div>
-          
+            
             <div class="form-group" style="margin-top: 24px;">
                 <label>协议选择</label>
                 <div style="margin-top: 8px;">
                     <div class="list-item" onclick="toggleSwitch('switchVL')">
-                        <div><div class="list-item-label">VLESS (vl)</div></div>
+                        <div>
+                            <div class="list-item-label">VLESS (vl)</div>
+                        </div>
                         <div class="switch active" id="switchVL"></div>
                     </div>
                     <div class="list-item" onclick="toggleSwitch('switchTJ')">
-                        <div><div class="list-item-label">Trojan (tj)</div></div>
+                        <div>
+                            <div class="list-item-label">Trojan (tj)</div>
+                        </div>
                         <div class="switch" id="switchTJ"></div>
                     </div>
                     <div class="list-item" onclick="toggleSwitch('switchVM')">
-                        <div><div class="list-item-label">VMess (vm)</div></div>
+                        <div>
+                            <div class="list-item-label">VMess (vm)</div>
+                        </div>
                         <div class="switch" id="switchVM"></div>
                     </div>
                 </div>
             </div>
-          
+            
             <div class="form-group" style="margin-top: 24px;">
                 <label>客户端选择</label>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 8px;">
@@ -516,36 +540,51 @@ function generateHomePage() {
                 </div>
                 <div class="result-url" id="clientSubscriptionUrl" style="display: none; margin-top: 12px; padding: 12px; background: rgba(0, 122, 255, 0.1); border-radius: 8px; font-size: 13px; color: #007aff; word-break: break-all;"></div>
             </div>
-          
+            
             <div class="form-group">
                 <label>IP版本选择</label>
                 <div style="display: flex; gap: 16px; margin-top: 8px;">
-                    <label class="checkbox-label"><input type="checkbox" id="ipv4Enabled" checked><span>IPv4</span></label>
-                    <label class="checkbox-label"><input type="checkbox" id="ipv6Enabled" checked><span>IPv6</span></label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="ipv4Enabled" checked>
+                        <span>IPv4</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="ipv6Enabled" checked>
+                        <span>IPv6</span>
+                    </label>
                 </div>
             </div>
-          
+            
             <div class="form-group">
                 <label>运营商选择</label>
                 <div style="display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px;">
-                    <label class="checkbox-label"><input type="checkbox" id="ispMobile" checked><span>移动</span></label>
-                    <label class="checkbox-label"><input type="checkbox" id="ispUnicom" checked><span>联通</span></label>
-                    <label class="checkbox-label"><input type="checkbox" id="ispTelecom" checked><span>电信</span></label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="ispMobile" checked>
+                        <span>移动</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="ispUnicom" checked>
+                        <span>联通</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="ispTelecom" checked>
+                        <span>电信</span>
+                    </label>
                 </div>
             </div>
-          
+            
             <div class="list-item" onclick="toggleSwitch('switchTLS')" style="margin-top: 8px;">
                 <div>
                     <div class="list-item-label">仅TLS节点</div>
-                    <div class="list-item-description">启用后只生成带TLS的节点</div>
+                    <div class="list-item-description">启用后只生成带TLS的节点，不生成非TLS节点（如80端口）</div>
                 </div>
                 <div class="switch" id="switchTLS"></div>
             </div>
-          
+            
             <div class="list-item" onclick="toggleSwitch('switchECH')" style="margin-top: 8px;">
                 <div>
                     <div class="list-item-label">ECH (Encrypted Client Hello)</div>
-                    <div class="list-item-description">启用后节点链接将携带 ECH 开关（Sing-box 等直接可用）</div>
+                    <div class="list-item-description">启用后节点链接将携带 ECH 参数，需客户端支持；开启时自动仅TLS</div>
                 </div>
                 <div class="switch" id="switchECH"></div>
             </div>
@@ -557,18 +596,18 @@ function generateHomePage() {
                 <input type="text" id="customECHDomain" placeholder="例如: cloudflare-ech.com" style="font-size: 14px;">
             </div>
         </div>
-      
+        
         <div class="footer">
-            <p>v4.2.1 零转换器 • 纯净私有定制</p>
+            <p>极简命名版工具 • 纯净私有定制</p>
         </div>
     </div>
-  
+    
     <script>
         let switches = {
             switchDomain: false, switchIP: false, switchGitHub: true, switchVL: true,
             switchTJ: false, switchVM: false, switchTLS: false, switchECH: false
         };
-      
+        
         function toggleSwitch(id) {
             const switchEl = document.getElementById(id);
             switches[id] = !switches[id];
@@ -583,42 +622,71 @@ function generateHomePage() {
                 }
             }
         }
-      
+        
+        const SUB_CONVERTER_URL = "${ scu }";
+        
+        function tryOpenApp(schemeUrl, fallbackCallback, timeout) {
+            timeout = timeout || 2500;
+            let appOpened = false, callbackExecuted = false;
+            const startTime = Date.now();
+            
+            const handler = () => { if (Date.now() - startTime < 3000 && !callbackExecuted) appOpened = true; };
+            window.addEventListener('blur', handler);
+            document.addEventListener('visibilitychange', handler);
+            
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = schemeUrl;
+            document.body.appendChild(iframe);
+            
+            setTimeout(() => {
+                if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+                window.removeEventListener('blur', handler);
+                document.removeEventListener('visibilitychange', handler);
+                
+                if (!callbackExecuted) {
+                    callbackExecuted = true;
+                    if (!appOpened && fallbackCallback) fallbackCallback();
+                }
+            }, timeout);
+        }
+        
         function generateClientLink(clientType, clientName) {
             const domain = document.getElementById('domain').value.trim();
             const uuid = document.getElementById('uuid').value.trim();
             const customPath = document.getElementById('customPath').value.trim() || '/';
-
-            if (!domain || !uuid) return alert('⚠️ 请填写优选域名和 UUID/Password');
-            if (!switches.switchVL && !switches.switchTJ && !switches.switchVM) return alert('⚠️ 请至少选择一个协议');
-
+            
+            if (!domain || !uuid) return alert('请先填写域名和UUID/Password');
+            if (!switches.switchVL && !switches.switchTJ && !switches.switchVM) return alert('请至少选择一个协议');
+            
             const ipv4 = document.getElementById('ipv4Enabled').checked;
             const ipv6 = document.getElementById('ipv6Enabled').checked;
             const ispMobile = document.getElementById('ispMobile').checked;
             const ispUnicom = document.getElementById('ispUnicom').checked;
             const ispTelecom = document.getElementById('ispTelecom').checked;
             const githubUrl = document.getElementById('githubUrl').value.trim();
-
+            
             const baseUrl = new URL(window.location.href).origin;
             let subUrl = \`\${baseUrl}/\${uuid}/sub?domain=\${encodeURIComponent(domain)}\`;
-
+            
+            // 省略默认参数，大幅缩短链接
             if (switches.switchDomain) subUrl += '&epd=yes';
             if (switches.switchIP) subUrl += '&epi=yes';
             if (!switches.switchGitHub) subUrl += '&egi=no';
             if (githubUrl) subUrl += \`&piu=\${encodeURIComponent(githubUrl)}\`;
-
+            
             if (!switches.switchVL) subUrl += '&ev=no';
             if (switches.switchTJ) subUrl += '&et=yes';
             if (switches.switchVM) subUrl += '&mess=yes';
-
+            
             if (!ipv4) subUrl += '&ipv4=no';
             if (!ipv6) subUrl += '&ipv6=no';
             if (!ispMobile) subUrl += '&ispMobile=no';
             if (!ispUnicom) subUrl += '&ispUnicom=no';
             if (!ispTelecom) subUrl += '&ispTelecom=no';
-
+            
             if (switches.switchTLS) subUrl += '&dkby=yes';
-
+            
             if (switches.switchECH) {
                 subUrl += '&ech=yes';
                 const dnsVal = document.getElementById('customDNS')?.value.trim();
@@ -627,117 +695,89 @@ function generateHomePage() {
                 if (domainVal) subUrl += \`&customECHDomain=\${encodeURIComponent(domainVal)}\`;
             }
             if (customPath && customPath !== '/') subUrl += \`&path=\${encodeURIComponent(customPath)}\`;
-
-            // 🔥 v4.2.1 关键：直接使用自身Worker订阅（零第三方转换器）
-            let finalUrl = subUrl + \`&target=\${clientType.toLowerCase()}\`;
-
-            document.getElementById('clientSubscriptionUrl').textContent = finalUrl;
-            document.getElementById('clientSubscriptionUrl').style.display = 'block';
-
-            const copyAction = () => navigator.clipboard.writeText(finalUrl).then(() => alert(clientName + ' 订阅链接已复制'));
-
-            let schemeUrl = '';
+            
+            let finalUrl = subUrl, schemeUrl = '', displayName = clientName || '';
+            
             if (clientType === 'v2ray') {
-                if (clientName === 'V2RAY') return copyAction();
-                else if (clientName === 'Shadowrocket') schemeUrl = 'shadowrocket://add/' + encodeURIComponent(finalUrl);
-                else if (clientName === 'V2RAYNG') schemeUrl = 'v2rayng://install?url=' + encodeURIComponent(finalUrl);
-                else if (clientName === 'NEKORAY') schemeUrl = 'nekoray://install-config?url=' + encodeURIComponent(finalUrl);
+                document.getElementById('clientSubscriptionUrl').textContent = finalUrl;
+                document.getElementById('clientSubscriptionUrl').style.display = 'block';
+                const copyAction = () => navigator.clipboard.writeText(finalUrl).then(() => alert(displayName + ' 订阅链接已复制'));
+                
+                if (clientName === 'V2RAY') copyAction();
+                else if (clientName === 'Shadowrocket') tryOpenApp('shadowrocket://add/' + encodeURIComponent(finalUrl), copyAction);
+                else if (clientName === 'V2RAYNG') tryOpenApp('v2rayng://install?url=' + encodeURIComponent(finalUrl), copyAction);
+                else if (clientName === 'NEKORAY') tryOpenApp('nekoray://install-config?url=' + encodeURIComponent(finalUrl), copyAction);
             } else {
+                // 移除大量废弃/默认的无用参数，只保留核心参数
+                finalUrl = SUB_CONVERTER_URL + '?target=' + clientType + '&url=' + encodeURIComponent(subUrl) + '&emoji=true&expand=true&new_name=true';
+                
+                document.getElementById('clientSubscriptionUrl').textContent = finalUrl;
+                document.getElementById('clientSubscriptionUrl').style.display = 'block';
+                
                 if (clientType === 'clash') {
                     schemeUrl = clientName === 'STASH' ? 'stash://install?url=' + encodeURIComponent(finalUrl) : 'clash://install-config?url=' + encodeURIComponent(finalUrl);
                 } else if (clientType === 'surge') schemeUrl = 'surge:///install-config?url=' + encodeURIComponent(finalUrl);
                 else if (clientType === 'singbox') schemeUrl = 'sing-box://import-remote-profile?url=' + encodeURIComponent(finalUrl);
                 else if (clientType === 'loon') schemeUrl = 'loon://install?url=' + encodeURIComponent(finalUrl);
                 else if (clientType === 'quanx') schemeUrl = 'quantumult-x://install-config?url=' + encodeURIComponent(finalUrl);
+                
+                const copyAction = () => navigator.clipboard.writeText(finalUrl).then(() => alert(displayName + ' 订阅链接已复制'));
+                if (schemeUrl) tryOpenApp(schemeUrl, copyAction);
+                else copyAction();
             }
-
-            if (schemeUrl) {
-                tryOpenApp(schemeUrl, copyAction);
-            } else {
-                copyAction();
-            }
-        }
-
-        function tryOpenApp(schemeUrl, fallbackCallback, timeout = 2500) {
-            let appOpened = false, callbackExecuted = false;
-            const startTime = Date.now();
-            const handler = () => { if (Date.now() - startTime < 3000 && !callbackExecuted) appOpened = true; };
-            window.addEventListener('blur', handler);
-            document.addEventListener('visibilitychange', handler);
-            const iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = schemeUrl;
-            document.body.appendChild(iframe);
-            setTimeout(() => {
-                if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-                window.removeEventListener('blur', handler);
-                document.removeEventListener('visibilitychange', handler);
-                if (!callbackExecuted) {
-                    callbackExecuted = true;
-                    if (!appOpened && fallbackCallback) fallbackCallback();
-                }
-            }, timeout);
         }
     </script>
 </body>
-</html>`;
+</html>`; 
 }
 
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const path = url.pathname;
-      
+        
         if (path === '/' || path === '') {
-            return new Response(generateHomePage(), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            return new Response(generateHomePage(env?.scu || DEFAULT_CONFIG.scu), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
         if (path === '/test-optimize-api') { return new Response('OK'); }
-      
+        
         const pathMatch = path.match(/^\/([^\/]+)\/sub$/);
         if (pathMatch) {
+            // ================== 双层缓存护城河 ==================
             const cache = caches.default;
             const cacheKey = new Request(url.toString(), request);
+            
+            // 1. Edge Cache 拦截 (命中直接返回，CPU占用接近0ms)
             const cachedResponse = await cache.match(cacheKey);
             if (cachedResponse) return cachedResponse;
 
             const reqConfig = {
-                user: pathMatch[1],
-                workerDomain: url.hostname,
-                nodeDomain: url.searchParams.get('domain') || url.hostname,
-                target: url.searchParams.get('target') || 'base64',
-                customPath: url.searchParams.get('path') || '/',
-                piu: url.searchParams.get('piu') || DEFAULT_CONFIG.defaultIPURL,
-                epdEnabled: url.searchParams.get('epd') === 'yes',
-                epiEnabled: url.searchParams.get('epi') === 'yes',
-                egiEnabled: url.searchParams.get('egi') !== 'no',
-                evEnabled: url.searchParams.get('ev') === 'yes' || (url.searchParams.get('ev') === null && DEFAULT_CONFIG.ev),
-                etEnabled: url.searchParams.get('et') === 'yes',
-                vmEnabled: url.searchParams.get('mess') === 'yes',
-                ipv4Enabled: url.searchParams.get('ipv4') !== 'no',
-                ipv6Enabled: url.searchParams.get('ipv6') !== 'no',
-                ispMobile: url.searchParams.get('ispMobile') !== 'no',
-                ispUnicom: url.searchParams.get('ispUnicom') !== 'no',
-                ispTelecom: url.searchParams.get('ispTelecom') !== 'no',
-                disableNonTLS: url.searchParams.get('dkby') === 'yes',
-                echEnabled: false
+                user: pathMatch[1], workerDomain: url.hostname, nodeDomain: url.searchParams.get('domain') || url.hostname, target: url.searchParams.get('target') || 'base64', customPath: url.searchParams.get('path') || '/', piu: url.searchParams.get('piu') || DEFAULT_CONFIG.defaultIPURL,
+                epdEnabled: url.searchParams.get('epd') === 'yes', epiEnabled: url.searchParams.get('epi') === 'yes', egiEnabled: url.searchParams.get('egi') !== 'no',
+                evEnabled: url.searchParams.get('ev') === 'yes' || (url.searchParams.get('ev') === null && DEFAULT_CONFIG.ev), etEnabled: url.searchParams.get('et') === 'yes', vmEnabled: url.searchParams.get('mess') === 'yes',
+                ipv4Enabled: url.searchParams.get('ipv4') !== 'no', ipv6Enabled: url.searchParams.get('ipv6') !== 'no', ispMobile: url.searchParams.get('ispMobile') !== 'no', ispUnicom: url.searchParams.get('ispUnicom') !== 'no', ispTelecom: url.searchParams.get('ispTelecom') !== 'no',
+                disableNonTLS: url.searchParams.get('dkby') === 'yes', echConfig: null
             };
 
             if (!url.searchParams.get('domain')) return new Response('缺少域名参数', { status: 400 });
-           
+
             const echParam = url.searchParams.get('ech');
             if (echParam === 'yes' || (echParam === null && DEFAULT_CONFIG.enableECH)) {
                 reqConfig.disableNonTLS = true;
-                reqConfig.echEnabled = true;
+                reqConfig.echConfig = `${url.searchParams.get('customECHDomain') || DEFAULT_CONFIG.customECHDomain}+${url.searchParams.get('customDNS') || DEFAULT_CONFIG.customDNS}`;
             }
-           
+
+            // 获取数据并生成节点 (内嵌了 KV 缓存机制，命中则不消耗外部 fetch 网络时间)
             const response = await handleSubscriptionRequest(request, env, ctx, reqConfig);
-          
+            
+            // 2. 异步回写 Edge Cache (延长至 600 秒)
             if (response.status === 200) {
                 ctx.waitUntil(cache.put(cacheKey, response.clone()));
             }
+
             return response;
         }
-      
+        
         return new Response('Not Found', { status: 404 });
     }
 };
