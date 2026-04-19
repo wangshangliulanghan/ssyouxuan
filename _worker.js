@@ -1,4 +1,4 @@
-// Cloudflare Worker - 极限性能版优选工具 (v5.2 极客原生版：原生直出 + 随机伪装 + 移动V6全开 + 修复缺漏)
+// Cloudflare Worker - 极限性能版优选工具 (v5.2.1 极客原生版：修复 1101 报错 + 纯净直出 + 随机伪装)
 // 核心：彻底移除转换器 + 随机路径防扫描 + 原生 Sing-box/Clash 编译 + 晚高峰 h2 固定
 
 const DEFAULT_CONFIG = {
@@ -108,9 +108,6 @@ async function fetchDynamicIPs(env, ctx, ipv4Enabled, ipv6Enabled, ispMobile, is
         if (results.length > 0) {
             results = results.filter(item => {
                 const name = item.name || '';
-                // 🚀 已恢复：释放移动宽带神油，不再扔掉官方优选IPv6
-                // if (name.includes('官方优选IPv6')) return false; 
-                
                 if (name.includes('移动') && !ispMobile) return false;
                 if (name.includes('联通') && !ispUnicom) return false;
                 if (name.includes('电信') && !ispTelecom) return false;
@@ -335,7 +332,7 @@ function generateSurgeConfig(links) {
     return config;
 }
 
-// 🚀 补全并修复 Sing-box 原生 JSON 生成引擎
+// 🚀 修复补全：Sing-box 原生 JSON 生成引擎
 function generateSingboxConfig(links) {
     const outbounds = []; 
     const proxyTags = [];
@@ -378,7 +375,8 @@ function generateSingboxConfig(links) {
 }
 
 // ================= UI 与前端逻辑 =================
-function generateHomePage() {
+function generateHomePage(scuValue) {
+    const scu = scuValue || 'https://url.v1.mk/sub';
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -687,7 +685,8 @@ export default {
         const path = url.pathname;
         
         if (path === '/' || path === '') {
-            return new Response(generateHomePage(), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            // ✅ 修复 1101 的核心：这里必须把 scu 参数传进去
+            return new Response(generateHomePage(env?.scu || DEFAULT_CONFIG.scu), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
         if (path === '/test-optimize-api') { return new Response('OK'); }
         
