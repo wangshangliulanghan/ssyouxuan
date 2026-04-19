@@ -1,4 +1,4 @@
-// Cloudflare Worker - 极限性能版优选工具 (v5.2.1 极客原生版：修复 1101 报错 + 纯净直出 + 随机伪装)
+// Cloudflare Worker - 极限性能版优选工具 (v5.2.2 极客原生版：修复UI复选框显示 + 原生直出 + 随机伪装)
 // 核心：彻底移除转换器 + 随机路径防扫描 + 原生 Sing-box/Clash 编译 + 晚高峰 h2 固定
 
 const DEFAULT_CONFIG = {
@@ -195,7 +195,6 @@ function generateNodesFromList(list, user, workerDomain, disableNonTLS, customPa
             const tls = port !== 80;
             if (disableNonTLS && !tls) continue;
 
-            // 🔥 核心伪装：如果未自定义路径，则使用随机混淆路径和随机大厂 Host
             const wsPath = customPath && customPath !== "/" ? customPath : randomPath();
             const host = randomHost(workerDomain);
             
@@ -332,7 +331,6 @@ function generateSurgeConfig(links) {
     return config;
 }
 
-// 🚀 修复补全：Sing-box 原生 JSON 生成引擎
 function generateSingboxConfig(links) {
     const outbounds = []; 
     const proxyTags = [];
@@ -357,7 +355,6 @@ function generateSingboxConfig(links) {
             tls: { enabled: tls, server_name: sni || host, insecure: false }, 
             transport: { type: 'ws', path: path, headers: { Host: host } } 
         };
-        // Sing-box ECH 原生开关
         if (link.includes('ech=true') && tls) {
             node.tls.ech = { enabled: true };
         }
@@ -415,8 +412,16 @@ function generateHomePage(scuValue) {
         .result-url { margin-top: 12px; padding: 12px; background: rgba(0, 122, 255, 0.1); border-radius: 10px; font-size: 13px; color: #007aff; word-break: break-all; display: none; line-height: 1.5; }
         .client-btn { padding: 12px 16px; font-size: 14px; font-weight: 500; color: #007AFF; background: rgba(0, 122, 255, 0.1); border: 1px solid rgba(0, 122, 255, 0.2); border-radius: 12px; cursor: pointer; transition: all 0.2s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
         .client-btn:active { transform: scale(0.97); background: rgba(0, 122, 255, 0.2); border-color: rgba(0, 122, 255, 0.3); }
-        .checkbox-label { display: flex; align-items: center; cursor: pointer; font-size: 17px; gap: 8px; }
-        .checkbox-label input[type="checkbox"] { width: 22px; height: 22px; cursor: pointer; }
+        
+        /* 🚀 核心修复点：还原原生复选框样式 */
+        .checkbox-label { display: flex; align-items: center; cursor: pointer; font-size: 17px; font-weight: 400; user-select: none; -webkit-user-select: none; position: relative; z-index: 1; padding: 8px 0; }
+        .checkbox-label input[type="checkbox"] { margin-right: 12px; width: 22px; height: 22px; cursor: pointer; flex-shrink: 0; position: relative; z-index: 2; -webkit-appearance: checkbox; appearance: checkbox; }
+        .checkbox-label span { cursor: pointer; position: relative; z-index: 1; }
+        
+        @media (max-width: 480px) { .client-btn { font-size: 12px; padding: 10px 12px; } .header h1 { font-size: 34px; } }
+        .footer { text-align: center; padding: 32px 20px; color: #86868b; font-size: 13px; }
+        .footer a { color: #007AFF; text-decoration: none; font-weight: 500; transition: opacity 0.2s ease; }
+        .footer a:active { opacity: 0.6; }
         @media (prefers-color-scheme: dark) {
             body { background: linear-gradient(180deg, #000000 0%, #1c1c1e 50%, #2c2c2e 100%); color: #f5f5f7; }
             .card { background: rgba(28, 28, 30, 0.75); border: 0.5px solid rgba(255, 255, 255, 0.12); }
@@ -434,7 +439,7 @@ function generateHomePage(scuValue) {
     <div class="container">
         <div class="header">
             <h1>服务器优选工具</h1>
-            <p>全原生直出 • 零转换器污染 • V5.2版</p>
+            <p>原生编译架构 • 突破网络协议封锁</p>
         </div>
         
         <div class="card">
@@ -685,7 +690,7 @@ export default {
         const path = url.pathname;
         
         if (path === '/' || path === '') {
-            // ✅ 修复 1101 的核心：这里必须把 scu 参数传进去
+            // ✅ 核心修复：确保 scu 变量正确传递
             return new Response(generateHomePage(env?.scu || DEFAULT_CONFIG.scu), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
         if (path === '/test-optimize-api') { return new Response('OK'); }
