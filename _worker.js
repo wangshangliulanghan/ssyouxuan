@@ -4,7 +4,7 @@
 const DEFAULT_CONFIG = {
     epd: false, epi: false, egi: true,
     ev: true, et: false, vm: false,
-    scu: 'https://url.v1.mk/sub',
+    scu: 'https://sub.lingqiu.eu.org/sub',
     enableECH: false,
     customDNS: 'https://dns.joeyblog.eu.org/joeyblog',
     customECHDomain: 'cloudflare-ech.com',
