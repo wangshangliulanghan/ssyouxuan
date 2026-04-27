@@ -376,7 +376,7 @@ function generateSurgeConfig(links) {
 
 // ================= UI 与前端逻辑 =================
 function generateHomePage(scuValue) {
-    const scu = scuValue || 'https://url.v1.mk/sub';
+    const scu = scuValue || 'https://sub.lingqiu.eu.org/sub';
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
