@@ -4,7 +4,7 @@
 const DEFAULT_CONFIG = {
     epd: false, epi: false, egi: true,
     ev: true, et: false, vm: false,
-    scu: 'https://sub.lingqiu.eu.org/sub',
+    scu: 'https://sub.897922.xyz/sub',
     enableECH: false,
     customDNS: 'https://dns.joeyblog.eu.org/joeyblog',
     customECHDomain: 'cloudflare-ech.com',
@@ -376,7 +376,7 @@ function generateSurgeConfig(links) {
 
 // ================= UI 与前端逻辑 =================
 function generateHomePage(scuValue) {
-    const scu = scuValue || 'https://sub.lingqiu.eu.org/sub';
+    const scu = scuValue || 'https://sub.897922.xyz/sub';
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
